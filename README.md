@@ -243,12 +243,41 @@ them, so clients must reach your host directly for media. Keep those ports open 
 host firewall and set `LIVEKIT_NODE_IP` to the server's real public address, or calls will
 connect and carry no audio.
 
+## Updating
+
+```bash
+./update.sh --check    # what would change, touching nothing
+./update.sh            # do it
+```
+
+It fast-forwards this repository, reports the commit each service would move to, carries
+any settings added upstream into your `.env` (with the comments that explain them, after
+copying the old file aside), pulls the pinned third-party images, rebuilds, and waits until
+every health check passes before saying it is done. If the stack does not come back it
+prints what each service is doing and the recent errors rather than leaving you to find
+them.
+
+That last part is the reason to prefer it over `git pull && docker compose up -d --build`:
+a setting added upstream is invisible until something that has no default stops the stack,
+and by then it is not obvious that a missing `.env` key is the cause.
+
+Your data is in docker volumes and is never touched. Updates are one-way - there is no
+`--rollback` - so **take a backup first** (see below) on an instance you care about.
+
+`*_SRC` in `.env` is what "latest" means. They track `#dev` out of the box, which is where
+work lands and can therefore break; pin a tag instead if you would rather decide when your
+instance moves:
+
+```
+EQUINOX_SRC=https://github.com/StrafeChat/equinox.git#v1.2.0
+```
+
 ## Day-to-day
 
 ```bash
 docker compose ps                     # health
 docker compose logs -f equinox-api    # API logs (stargate, nebula, caddy likewise)
-docker compose pull && docker compose up -d --build   # upgrade after a git pull
+./update.sh                           # upgrade to the latest of what *_SRC points at
 docker compose exec scylla nodetool status            # database health
 ```
 
