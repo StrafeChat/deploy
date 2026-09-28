@@ -35,7 +35,9 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
-      DOMAIN: ${DOMAIN}
+      # :? - without it compose silently substitutes an empty string and you get an
+      # instance that boots, serves no certificate and federates as "". Fail instead.
+      DOMAIN: ${DOMAIN:?not set - run ./setup.sh, or cp .env.example .env and fill it in}
       ACME_EMAIL: ${ACME_EMAIL:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -135,7 +137,7 @@ services:
       # Nebula: internal URL for uploads, public URL embedded in asset links.
       NEBULA_BASE_URL: http://nebula:4010
       NEBULA_PUBLIC_URL: https://${DOMAIN}/cdn
-      NEBULA_UPLOAD_SECRET: ${NEBULA_UPLOAD_SECRET}
+      NEBULA_UPLOAD_SECRET: ${NEBULA_UPLOAD_SECRET:?not set - run ./setup.sh, or cp .env.example .env and fill it in}
       NEBULA_ATTACHMENT_MAX_MB: ${ATTACHMENT_MAX_MB:-25}
       # Federation: this instance is reachable as $DOMAIN by other instances.
       FEDERATION_DOMAIN: ${DOMAIN}
