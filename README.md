@@ -88,6 +88,21 @@ Codes are checked against a compare-and-set, so a single-use invite admits exact
 account even if several people redeem it at the same instant. Turning `INVITE_ONLY` back off
 leaves existing codes in place, unused and harmless.
 
+### Moderation
+
+Administrators have a dashboard at `https://$DOMAIN/admin` (also reachable from the user
+menu and from Settings → Instance). It can find any account by id, email, `name#0001` or
+username; show where it is signed in from, which spaces it is in and what has been reported
+about it; ban it from the instance - every session ends at once, the gateway drops its
+connections, and sign-in is refused with the reason - for a day, a week, a month, a year
+or until lifted; and take down a space, which removes it for all its members.
+
+Anyone can report a user or a space (from a message, a member list, a profile, or the space
+menu). Reports queue up on the dashboard; resolving one can dismiss it, mark it handled,
+ban the account or take the space down, and every action lands in the instance audit log.
+The server never copies message text into a report: in an end-to-end encrypted room it
+cannot read it, and the reporter is told to paste it if they want it seen.
+
 ### Registration captcha
 
 Any instance open to the public should run one (`CAPTCHA=true`). Four providers:
