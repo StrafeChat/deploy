@@ -55,7 +55,7 @@ and you're in.
 | --- | --- | --- |
 | Identity | `DOMAIN`, `ACME_EMAIL` | The domain is also your federation name. |
 | Registration | `INVITE_ONLY`, `INSTANCE_ADMINS`, `CAPTCHA`, `CAPTCHA_PROVIDER` + that provider's keys | See below. |
-| Uploads | `ATTACHMENT_MAX_MB`, `STORAGE_BACKEND`, `S3_*`, `NEBULA_CORS_ORIGINS` | Local volume or any S3-compatible bucket. |
+| Uploads | `ATTACHMENT_MAX_MB`, `STORAGE_BACKEND`, `S3_*`, `NEBULA_CORS_ORIGINS`, `SEED_EMOJI` | Local volume or any S3-compatible bucket; the CDN also serves the emoji sets so the client needs no third-party CDN. |
 | Voice/video | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_NODE_IP` | Bundled LiveKit; see below. |
 | Federation | `FEDERATION_ALLOWLIST`, `FEDERATION_BLOCKLIST`, `FEDERATION_SIGNING_KEY` | Open by default. |
 | Tuning | `SNOWFLAKE_NODE_ID`, `LOG_LEVEL`, `SCYLLA_SMP`, `SCYLLA_MEMORY` | |

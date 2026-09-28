@@ -56,6 +56,7 @@ services:
     environment:
       STRAFE_API_URL: https://${DOMAIN}/api
       STRAFE_STARGATE_URL: wss://${DOMAIN}/gateway/events
+      STRAFE_CDN_URL: https://${DOMAIN}/cdn
 
   scylla:
     image: scylladb/scylla:5.4
@@ -196,6 +197,10 @@ services:
       # (encrypted attachments are downloaded with fetch(), which needs CORS). Leave
       # empty to allow any origin, or list the instances you federate with.
       CORS_ORIGINS: ${NEBULA_CORS_ORIGINS:-}
+      # Serve the Unicode emoji sets from this instance instead of a third-party CDN, by
+      # seeding them into the store on start (background, idempotent). Set to false to skip -
+      # e.g. an s3 replica whose bucket a primary already seeded.
+      SEED_EMOJI: ${SEED_EMOJI:-true}
       # fs (the nebula-data volume) or s3 (any S3-compatible bucket).
       STORAGE_BACKEND: ${STORAGE_BACKEND:-fs}
       DATA_DIR: /data
