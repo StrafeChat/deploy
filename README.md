@@ -162,6 +162,46 @@ any of them, `docker compose up -d --build` rebuilds only what moved.
 Pinning tags rather than tracking `#dev` is the sane choice for an instance you care about:
 `dev` is where work lands, so it can break.
 
+## Behind Cloudflare (or any other CDN)
+
+If you put Cloudflare's proxy in front of this, set **SSL/TLS → Overview → Full (strict)**
+before anything else. On **Flexible**, Cloudflare speaks plain HTTP to your server; Caddy
+answers every plain-HTTP request with a redirect to HTTPS; Cloudflare hands that redirect
+back to the browser, which asks again over HTTPS, which Cloudflare again turns into plain
+HTTP to your server. That is `ERR_TOO_MANY_REDIRECTS`, and no change on this side can fix
+it — the loop is between the browser and Cloudflare.
+
+Two things make that failure outlive the fix:
+
+- Browsers cache a `301` more or less permanently, so the loop can persist after the
+  setting is correct. Confirm with `curl` rather than the browser (below), and retest in a
+  private window.
+- This deployment sends `Strict-Transport-Security`, so once a browser has seen the domain
+  it will refuse plain HTTP for a year. That is intended, but it means "try it over http"
+  is not a useful test.
+
+To see what your server is actually doing, ask it directly and skip both caches:
+
+```bash
+curl -sSI --resolve $DOMAIN:443:<your server ip> https://$DOMAIN/ | head -20
+```
+
+A healthy instance answers `HTTP/2 200`. A `301` to the URL you just requested is the
+loop, and tells you the redirect is being generated in front of the server, not by it.
+
+Caddy still needs its own certificate for Full (strict). The simplest order is to leave
+the record **DNS-only (grey cloud)** for the first start, let Let's Encrypt issue over
+ports 80/443, then switch the proxy on. If you would rather keep the proxy on throughout,
+issue a Cloudflare Origin Certificate and point Caddy at it, or give Caddy a Cloudflare API
+token and let it solve the DNS-01 challenge — Cloudflare's proxy does not pass the
+TLS-ALPN challenge through.
+
+One thing the proxy cannot carry at all: **voice and video media**. WebRTC needs the raw
+UDP ports (`50000-50200/udp`, `3478/udp`) and Cloudflare's HTTP proxy does not forward
+them, so clients must reach your host directly for media. Keep those ports open on the
+host firewall and set `LIVEKIT_NODE_IP` to the server's real public address, or calls will
+connect and carry no audio.
+
 ## Day-to-day
 
 ```bash
