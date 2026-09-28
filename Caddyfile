@@ -1,0 +1,58 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Caddy terminates TLS, so it is the one place HSTS is meaningful: a browser that has
+	# seen this header once refuses plain-http for the domain afterwards. The other headers
+	# are set by each backend too; repeating them here means a misconfigured upstream cannot
+	# quietly drop them. Content-Security-Policy is deliberately not set here - it lives in
+	# the client's index.html, where it can be tested outside this deployment.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# Federation discovery must be at the instance's bare domain.
+	handle /.well-known/strafe {
+		reverse_proxy equinox-api:4000
+	}
+
+	# REST API (the prefix is stripped; equinox routes have no /api).
+	handle_path /api/* {
+		reverse_proxy equinox-api:4000
+	}
+
+	# WebSocket gateway.
+	handle_path /gateway/* {
+		reverse_proxy equinox-stargate:4001
+	}
+
+	# Uploads / avatars / emoji / attachments.
+	handle_path /cdn/* {
+		reverse_proxy nebula:4010
+	}
+
+	# Voice/video signalling (WebSocket). Media itself goes straight to the livekit
+	# container's published UDP/TCP ports.
+	handle_path /livekit/* {
+		reverse_proxy livekit:7880
+	}
+
+	# Cap, the optional self-hosted captcha (COMPOSE_PROFILES=cap). Both the widget's
+	# challenge endpoint and the admin dashboard live here. Harmless when the container
+	# isn't running: the route simply 502s, and nothing links to it.
+	handle_path /cap/* {
+		reverse_proxy cap:3000
+	}
+
+	# Everything else is the web client.
+	handle {
+		reverse_proxy web:80
+	}
+}

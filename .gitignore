@@ -1,0 +1,8 @@
+# Written by ./setup.sh and holds every secret this instance has. Never commit it.
+.env
+.env.bak
+
+# Anything an operator keeps beside the deployment.
+*.pem
+*.key
+backups/
