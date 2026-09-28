@@ -64,11 +64,19 @@ services:
     volumes:
       - scylla-data:/var/lib/scylla
     healthcheck:
-      test: ["CMD-SHELL", "cqlsh 127.0.0.1 9042 -e 'DESCRIBE KEYSPACES' || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 20
-      start_period: 60s
+      # Scylla's entrypoint binds CQL to the container's own address
+      # (--rpc-address <container ip>), never to loopback, so the obvious
+      # `cqlsh 127.0.0.1 9042` can never connect - every probe fails, and the services
+      # waiting on this one give up after the full retry budget with the database
+      # perfectly healthy behind them. The REST API *does* listen on localhost, and
+      # native_transport returns true exactly when CQL is accepting clients, which is
+      # the condition that matters. It also costs a curl rather than starting a Python
+      # interpreter and a CQL driver every interval.
+      test: ["CMD-SHELL", "curl -sf http://localhost:10000/storage_service/native_transport | grep -q true"]
+      interval: 10s
+      timeout: 5s
+      retries: 36
+      start_period: 20s
 
   # Applies pending CQL migrations (tracked in schema_migrations) and creates the keyspace
   # on first start. The API and gateway wait for it to finish. -adopt makes a keyspace
