@@ -129,6 +129,10 @@ services:
       STARGATE_ALLOWED_ORIGINS: https://${DOMAIN}
       # Registration.
       INVITE_ONLY: ${INVITE_ONLY:-false}
+      # Accounts that may mint instance invites regardless of the database. The first
+      # account registered becomes an administrator on its own; this is the way back in
+      # if that account is lost.
+      INSTANCE_ADMINS: ${INSTANCE_ADMINS:-}
       CAPTCHA: ${CAPTCHA:-false}
       CAPTCHA_PROVIDER: ${CAPTCHA_PROVIDER:-altcha}
       ALTCHA_HMAC_KEY: ${ALTCHA_HMAC_KEY:-}

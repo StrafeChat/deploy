@@ -25,10 +25,23 @@ web client, CDN) are built straight from their own repositories - see
 [Building from source](#building-from-source) if you want to build a checkout of your own
 instead.
 
-`setup.sh` asks for your domain and an email, generates every secret, and writes `.env`.
-That file is the whole configuration - `docker-compose.yml` reads everything from it and
-is not meant to be edited. To configure by hand instead, `cp .env.example .env` and fill
-in the *Required* block; every other setting is documented inline with a working default.
+`setup.sh` walks through how you want the instance configured, generates every secret, and
+writes `.env`:
+
+| It asks | Default |
+| --- | --- |
+| Domain and an email for Let's Encrypt | *(required)* |
+| Whether registration needs an invite code | open |
+| Which captcha, and any keys it needs | ALTCHA, self-hosted |
+| Local disk or an S3 bucket for uploads, and the size limit | local disk, 25 MB |
+| Whether voice and video are on, and the public IP to advertise for media | on, auto-detected |
+| Whether federation is open, allowlisted or has a blocklist | open |
+
+Every question has a default in brackets, so pressing Enter the whole way gives a working
+public instance. `.env` is then the entire configuration - `docker-compose.yml` reads
+everything from it and is not meant to be edited. To configure by hand instead,
+`cp .env.example .env` and fill in the *Required* block; every other setting is documented
+inline with a working default.
 
 The first start builds the three images, creates the keyspace, runs every CQL migration,
 and generates the instance's federation signing key into the `federation-data` volume.
@@ -41,11 +54,39 @@ and you're in.
 | Area | Variables | Notes |
 | --- | --- | --- |
 | Identity | `DOMAIN`, `ACME_EMAIL` | The domain is also your federation name. |
-| Registration | `INVITE_ONLY`, `CAPTCHA`, `CAPTCHA_PROVIDER` + that provider's keys | See below. |
+| Registration | `INVITE_ONLY`, `INSTANCE_ADMINS`, `CAPTCHA`, `CAPTCHA_PROVIDER` + that provider's keys | See below. |
 | Uploads | `ATTACHMENT_MAX_MB`, `STORAGE_BACKEND`, `S3_*`, `NEBULA_CORS_ORIGINS` | Local volume or any S3-compatible bucket. |
 | Voice/video | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_NODE_IP` | Bundled LiveKit; see below. |
 | Federation | `FEDERATION_ALLOWLIST`, `FEDERATION_BLOCKLIST`, `FEDERATION_SIGNING_KEY` | Open by default. |
 | Tuning | `SNOWFLAKE_NODE_ID`, `LOG_LEVEL`, `SCYLLA_SMP`, `SCYLLA_MEMORY` | |
+
+### Invite-only registration
+
+`INVITE_ONLY=true` closes registration to people holding an invite code.
+
+The first account is exempt: on a brand-new instance there is nobody to have issued a code
+yet, so **the first registration succeeds without one and becomes this instance's
+administrator**. That claim is made with a lightweight transaction, so a stranger watching a
+fresh deployment cannot race you for it - but register your own account promptly all the
+same.
+
+After that, an administrator issues codes in **Settings → Instance**, each with an optional
+note, a use limit (1, 5, 25 or unlimited) and an expiry (1, 7 or 30 days, or never). A code
+that runs out or expires disappears on its own. The same thing over the API:
+
+```bash
+curl -X POST https://$DOMAIN/api/instance/invites \
+     -H "Authorization: <your token>" -H 'Content-Type: application/json' \
+     -d '{"max_uses":1,"max_age_seconds":604800,"note":"for Sam"}'
+```
+
+`INSTANCE_ADMINS` is a comma-separated list of user ids that may do this regardless of what
+the database says. Leave it empty - it exists so that an operator who loses the first
+account is not locked out of their own instance.
+
+Codes are checked against a compare-and-set, so a single-use invite admits exactly one
+account even if several people redeem it at the same instant. Turning `INVITE_ONLY` back off
+leaves existing codes in place, unused and harmless.
 
 ### Registration captcha
 
