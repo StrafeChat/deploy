@@ -57,6 +57,10 @@ services:
       STRAFE_API_URL: https://${DOMAIN}/api
       STRAFE_STARGATE_URL: wss://${DOMAIN}/gateway/events
       STRAFE_CDN_URL: https://${DOMAIN}/cdn
+      # Optional GIF-picker keys, passed through from the deploy .env (blank => GIF tab shows
+      # a "not configured" note). See web.strafe.chat entrypoint.sh / runtimeConfig.ts.
+      STRAFE_GIPHY_API_KEY: ${STRAFE_GIPHY_API_KEY:-}
+      STRAFE_HEYPSTER_API_KEY: ${STRAFE_HEYPSTER_API_KEY:-}
 
   scylla:
     image: scylladb/scylla:5.4
