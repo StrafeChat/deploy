@@ -97,6 +97,9 @@ services:
     environment:
       SCYLLA_HOSTS: scylla
       SCYLLA_KEYSPACE: strafechat
+      # The migration tool loads the same config as the API and gateway, so it refuses to
+      # start without this too, even though it never touches 2FA data itself.
+      TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:?not set - run ./setup.sh, or cp .env.example .env and fill it in}
     restart: "no"
 
   redis:
@@ -124,6 +127,11 @@ services:
       SNOWFLAKE_NODE_ID: ${SNOWFLAKE_NODE_ID:-1}
       SCYLLA_HOSTS: scylla
       SCYLLA_KEYSPACE: strafechat
+      # Wraps every user's TOTP secret at rest; required, see .env.example.
+      TOTP_ENCRYPTION_KEY: ${TOTP_ENCRYPTION_KEY:?not set - run ./setup.sh, or cp .env.example .env and fill it in}
+      # Passkeys are bound to the exact origin they were created on, so this is where the
+      # relying-party id comes from. Same origin the web client itself is served from.
+      WEB_URL: https://${DOMAIN}
       REDIS_ADDR: redis:6379
       REDIS_CACHE_ENABLED: "true"
       REDIS_CACHE_PREFIX: "equinox:"

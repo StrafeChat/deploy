@@ -200,6 +200,7 @@ detect_src NEBULA_SRC nebula || true
 # ------------------------------------------------------------------------- secrets ----
 
 upload_secret=$(openssl rand -hex 32)
+totp_key=$(openssl rand -hex 32)
 altcha_key=$(openssl rand -hex 32)
 # Only used if the operator switches CAPTCHA_PROVIDER to cap; generating it now means the
 # dashboard is never protected by a password someone typed in a hurry.
@@ -215,6 +216,7 @@ chmod 600 .env
 set_env DOMAIN "$domain"
 set_env ACME_EMAIL "$acme_email"
 set_env NEBULA_UPLOAD_SECRET "$upload_secret"
+set_env TOTP_ENCRYPTION_KEY "$totp_key"
 set_env SNOWFLAKE_NODE_ID "$node_id"
 
 set_env INVITE_ONLY "$invite_only"
