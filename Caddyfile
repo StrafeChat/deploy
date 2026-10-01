@@ -3,6 +3,15 @@
 }
 
 {$DOMAIN} {
+	# Running proxied behind Cloudflare (orange cloud)? Caddy cannot complete Let's
+	# Encrypt's TLS-ALPN challenge through the proxy, so serve a Cloudflare Origin
+	# certificate instead: set CLOUDFLARE_ORIGIN_CERT=true in .env and drop the cert at
+	# certs/origin.pem and its key at certs/origin.key. This expands to
+	# `tls /certs/origin.pem /certs/origin.key`, which also turns Caddy's own ACME off.
+	# Left empty (the default) Caddy fetches a Let's Encrypt certificate itself, which is
+	# right for a direct or DNS-only setup. See README "Behind Cloudflare".
+	{$CADDY_TLS}
+
 	encode zstd gzip
 
 	# Caddy terminates TLS, so it is the one place HSTS is meaningful: a browser that has

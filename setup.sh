@@ -128,6 +128,73 @@ if yesno "  Protect registration with a captcha?" "y"; then
   done
 fi
 
+# --------------------------------------------------------------------------- email ----
+
+section "Email"
+echo "  Email is used for two things: the verification link a new account gets, and"
+echo "  password-reset links. Both are off until the instance can send mail."
+smtp_host=""
+smtp_port=587
+smtp_tls=starttls
+smtp_user=""
+smtp_pass=""
+mail_hostname="mail.$domain"
+email_verification=false
+# Outbound port 25 is what the bundled relay delivers over, and the one port cloud
+# providers most often block for new accounts. A quick probe now beats a day of "the
+# email never arrived" later; without nc the question is simply asked.
+port25=unknown
+if command -v nc >/dev/null 2>&1; then
+  if nc -z -w 3 gmail-smtp-in.l.google.com 25 >/dev/null 2>&1; then port25=open; else port25=blocked; fi
+fi
+if yesno "  Send email from this instance?" "y"; then
+  echo
+  echo "  1) bundled relay   maddy, in its own container on this host: outbound only,"
+  echo "                     DKIM-signed, with a retry queue. Nothing to sign up for. Needs"
+  echo "                     the DNS records printed at the end, and outbound port 25."
+  echo "  2) your own SMTP   a mail server or provider you already have (host, port, login)."
+  if [ "$port25" = blocked ]; then
+    echo
+    echo "  WARNING: outbound port 25 looks blocked from this host. The bundled relay cannot"
+    echo "  deliver anything until your provider opens it; pick 2 unless they will."
+  fi
+  while :; do
+    choice=$(ask "  Which one?" "1")
+    case "$choice" in
+      1 | bundled | relay)
+        smtp_host=mail
+        smtp_port=587
+        smtp_tls=none
+        echo "    The relay introduces itself by this name; it needs an A record to this host"
+        echo "    and a PTR (reverse DNS) record from the host's IP back to it."
+        mail_hostname=$(ask "    Relay hostname" "mail.$domain")
+        break
+        ;;
+      2 | smtp | own)
+        smtp_host=$(ask_required "    SMTP host")
+        smtp_port=$(ask "    SMTP port" "587")
+        echo "    starttls = STARTTLS required (port 587, the usual); tls = implicit TLS (465);"
+        echo "    none = plaintext, only for a server on your own private network."
+        while :; do
+          smtp_tls=$(ask "    Connection" "starttls")
+          case "$smtp_tls" in starttls | tls | none) break ;; *) echo "    starttls, tls or none." >&2 ;; esac
+        done
+        smtp_user=$(ask "    Username (empty if the server needs none)" "")
+        [ -n "$smtp_user" ] && smtp_pass=$(ask_required "    Password")
+        break
+        ;;
+      *) echo "    Pick 1 or 2." >&2 ;;
+    esac
+  done
+  echo
+  echo "  With verification required, nobody can sign in until they open the link in their"
+  echo "  inbox - so turn it on only once the DNS records are in place and a test email has"
+  echo "  arrived. It is one line in .env later: EMAIL_VERIFICATION=true"
+  if yesno "  Require new accounts to verify their email before signing in?" "n"; then
+    email_verification=true
+  fi
+fi
+
 # ------------------------------------------------------------------------- uploads ----
 
 section "Uploads"
@@ -228,8 +295,9 @@ set_env FRIENDLY_CAPTCHA_SITE_KEY "$friendly_site"
 set_env FRIENDLY_CAPTCHA_API_KEY "$friendly_api"
 set_env TURNSTILE_SITE_KEY "$turnstile_site"
 set_env TURNSTILE_SECRET_KEY "$turnstile_secret"
+profiles=""
 if [ "$captcha_provider" = cap ]; then
-  set_env COMPOSE_PROFILES cap
+  profiles="cap"
   set_env CAP_API_URL "https://$domain/cap/"
 fi
 
@@ -248,6 +316,18 @@ set_env LIVEKIT_NODE_IP "$livekit_node_ip"
 
 set_env FEDERATION_ALLOWLIST "$federation_allowlist"
 set_env FEDERATION_BLOCKLIST "$federation_blocklist"
+
+set_env SMTP_HOST "$smtp_host"
+set_env SMTP_PORT "$smtp_port"
+set_env SMTP_TLS "$smtp_tls"
+set_env SMTP_USERNAME "$smtp_user"
+set_env SMTP_PASSWORD "$smtp_pass"
+set_env MAIL_HOSTNAME "$mail_hostname"
+set_env EMAIL_VERIFICATION "$email_verification"
+if [ "$smtp_host" = mail ]; then
+  profiles="${profiles:+$profiles,}mail"
+fi
+[ -n "$profiles" ] && set_env COMPOSE_PROFILES "$profiles"
 
 case "$local_src" in *EQUINOX_SRC*) set_env EQUINOX_SRC ../equinox ;; esac
 case "$local_src" in *WEB_SRC*) set_env WEB_SRC ../web.strafe.chat ;; esac
@@ -277,6 +357,32 @@ if [ -n "$livekit_key" ]; then
   echo "  voice/video   on - open 7881/tcp, 50000-50200/udp and 3478/udp on the firewall"
 else
   echo "  voice/video   off"
+fi
+if [ -z "$smtp_host" ]; then
+  echo "  email         off - no password reset, nobody asked to verify"
+else
+  if [ "$email_verification" = true ]; then
+    verify_word="verification required to sign in"
+  else
+    verify_word="verification optional"
+  fi
+  if [ "$smtp_host" = mail ]; then
+    echo "  email         bundled relay, sending as noreply@$domain - $verify_word"
+    echo "                DNS records to publish (docs/EMAIL.md explains each):"
+    echo "                  $mail_hostname  A    <this host's public IP>"
+    echo "                  <that IP>  PTR  $mail_hostname   (reverse DNS, set at your hosting provider)"
+    echo "                  $domain  TXT  \"v=spf1 a:$mail_hostname -all\""
+    echo "                  _dmarc.$domain  TXT  \"v=DMARC1; p=quarantine\""
+    echo "                  strafe._domainkey.$domain  TXT  <the relay prints it once started:>"
+    echo "                      docker compose exec mail cat /data/dkim_keys/${domain}_strafe.dns"
+    if [ "$port25" = blocked ]; then
+      echo "                WARNING: outbound port 25 looks blocked from this host - until your"
+      echo "                provider opens it, no email will leave."
+    fi
+  else
+    echo "  email         via $smtp_host:$smtp_port ($smtp_tls), sending as noreply@$domain - $verify_word"
+    echo "                make sure $domain's SPF/DKIM/DMARC records cover that server (docs/EMAIL.md)"
+  fi
 fi
 if [ -n "$federation_allowlist" ]; then
   echo "  federation    only: $federation_allowlist"

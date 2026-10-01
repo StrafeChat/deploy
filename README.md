@@ -9,7 +9,7 @@ TLS.
 - A Linux host with Docker Engine 24+ and the Compose plugin (`docker compose version`).
 - A DNS `A`/`AAAA` record for your domain pointing at the host.
 - Ports 80 and 443 reachable from the internet (Let's Encrypt validates over 80/443),
-  plus `7881/tcp`, `50000-50200/udp` and `3478/udp` for voice and video (see below).
+  plus `7881/tcp`, `50000-50200/udp`, `3478/udp` and `5349/tcp` for voice and video (see below).
 - 2 GB RAM minimum; ScyllaDB is the hungry one (`SCYLLA_MEMORY`).
 
 ## First start
@@ -55,6 +55,7 @@ and you're in.
 | --- | --- | --- |
 | Identity | `DOMAIN`, `ACME_EMAIL` | The domain is also your federation name. |
 | Registration | `INVITE_ONLY`, `INSTANCE_ADMINS`, `CAPTCHA`, `CAPTCHA_PROVIDER` + that provider's keys | See below. |
+| Email | `SMTP_HOST`, `SMTP_PORT`, `SMTP_TLS`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`, `EMAIL_VERIFICATION`, `MAIL_HOSTNAME`, `MAIL_DKIM_SELECTOR` | Off until `SMTP_HOST` is set; bundled send-only relay or your own server. See below. |
 | Uploads | `ATTACHMENT_MAX_MB`, `STORAGE_BACKEND`, `S3_*`, `NEBULA_CORS_ORIGINS`, `SEED_EMOJI` | Local volume or any S3-compatible bucket; the CDN also serves the emoji sets so the client needs no third-party CDN. |
 | Voice/video | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_NODE_IP` | Bundled LiveKit; see below. |
 | Federation | `FEDERATION_ALLOWLIST`, `FEDERATION_BLOCKLIST`, `FEDERATION_SIGNING_KEY` | Open by default. |
@@ -145,6 +146,53 @@ Cap stores its state in the instance's Redis on database 3, so there is no secon
 datastore to back up. `CAP_SITE_KEY` and `CAP_API_URL` are public (the browser needs
 both); `CAP_SECRET_KEY` and `CAP_ADMIN_KEY` never leave the server.
 
+### Email: verification links and password resets
+
+Two things use email: the verification link a new account gets, and the "forgot password"
+link. Both are off while `SMTP_HOST` is empty - the client then shows no forgot-password
+link and asks nobody to verify. Two ways to turn them on; `setup.sh` asks which.
+
+**The bundled relay** (`mail` in the compose file, started by `COMPOSE_PROFILES=mail`) is
+[maddy](https://maddy.email), a single-binary mail server in Go, configured in
+[`mail/maddy.conf`](mail/maddy.conf) to do one job: take mail from the API over a private
+Docker network no other container is on, DKIM-sign it with a key it generates on first
+start, and deliver it to the recipients' servers itself - over TLS, honouring MTA-STS and
+DANE, through a retry queue that rides out greylisting. It publishes no port, receives no
+mail and has no mailboxes; nothing to sign up for and no third party sees the addresses.
+`setup.sh` sets `SMTP_HOST=mail`, `SMTP_TLS=none` (the hop to it is a private network; the
+relay's own deliveries are TLS) and adds the profile.
+
+**Your own server** - a mail server you already run, or a provider's submission endpoint -
+takes `SMTP_HOST`, `SMTP_PORT`, `SMTP_TLS` (`starttls`, `tls` or `none`), and a username
+and password if it wants one. The API speaks ordinary authenticated SMTP to it.
+
+Mail only *arrives* if the domain says the sender is allowed to send it. For the bundled
+relay that means four DNS records, which `setup.sh` prints and
+[`docs/EMAIL.md`](docs/EMAIL.md) explains:
+
+| Record | Name | Value |
+| --- | --- | --- |
+| A | `mail.$DOMAIN` (`MAIL_HOSTNAME`) | this host's public IP - a plain record, not proxied |
+| PTR | the host's IP | `mail.$DOMAIN` - reverse DNS, set at your hosting provider |
+| TXT (SPF) | `$DOMAIN` | `v=spf1 a:mail.$DOMAIN -all` |
+| TXT (DKIM) | `strafe._domainkey.$DOMAIN` | printed by `docker compose exec mail cat /data/dkim_keys/$DOMAIN_strafe.dns` |
+| TXT (DMARC) | `_dmarc.$DOMAIN` | `v=DMARC1; p=quarantine` |
+
+The relay also needs **outbound port 25** open from this host. Most cloud providers block
+it for new accounts and open it on request; `setup.sh` probes it and warns. Behind
+Cloudflare, keep `mail.$DOMAIN` a DNS-only (grey cloud) record - a proxied one points at
+Cloudflare, not at you, and SPF and the PTR check both fail.
+
+`EMAIL_VERIFICATION=true` makes a verified address a condition of signing in: a new account
+is sent its link at registration and the login page says "verify your email first" (and
+re-sends the link, once a minute at most) until it is clicked. Accounts from before you
+turned it on are asked to verify once at their next sign-in. Turn it on **after** a test
+email has arrived - with it on and mail not getting through, nobody new can get in.
+Password reset works whenever email does, verification required or not.
+
+Each link is a single-use 256-bit token kept hashed in Redis: 24 hours for verification,
+1 hour for a reset. A reset signs the account out everywhere.
+
 ### Storing uploads in a bucket
 
 By default uploads live in the `nebula-data` volume on the host. For anything that will
@@ -184,6 +232,7 @@ open these on the host firewall, straight to the LiveKit container:
 | `7881/tcp` | ICE over TCP, for clients whose networks block UDP |
 | `50000-50200/udp` | Media |
 | `3478/udp` | The built-in TURN relay, for clients behind strict NATs |
+| `5349/tcp` | TURN/TLS - Firefox fails to connect at all without this, even when UDP works fine |
 
 LiveKit finds the host's public IP through STUN. On a host that cannot reach the
 internet directly, or behind a NAT that does not hairpin, set `LIVEKIT_NODE_IP`. Media
@@ -245,18 +294,65 @@ curl -sSI --resolve $DOMAIN:443:<your server ip> https://$DOMAIN/ | head -20
 A healthy instance answers `HTTP/2 200`. A `301` to the URL you just requested is the
 loop, and tells you the redirect is being generated in front of the server, not by it.
 
-Caddy still needs its own certificate for Full (strict). The simplest order is to leave
-the record **DNS-only (grey cloud)** for the first start, let Let's Encrypt issue over
-ports 80/443, then switch the proxy on. If you would rather keep the proxy on throughout,
-issue a Cloudflare Origin Certificate and point Caddy at it, or give Caddy a Cloudflare API
-token and let it solve the DNS-01 challenge — Cloudflare's proxy does not pass the
-TLS-ALPN challenge through.
+### Certificate: Full (strict) with a Cloudflare Origin cert
 
-One thing the proxy cannot carry at all: **voice and video media**. WebRTC needs the raw
-UDP ports (`50000-50200/udp`, `3478/udp`) and Cloudflare's HTTP proxy does not forward
-them, so clients must reach your host directly for media. Keep those ports open on the
-host firewall and set `LIVEKIT_NODE_IP` to the server's real public address, or calls will
-connect and carry no audio.
+Caddy still needs a certificate the edge accepts, and while the proxy is on it **cannot**
+get one from Let's Encrypt — Cloudflare terminates TLS, so the TLS-ALPN challenge never
+reaches Caddy. To keep the proxy on throughout, serve a **Cloudflare Origin certificate**
+(this is built in):
+
+1. Cloudflare dashboard → **SSL/TLS → Origin Server → Create Certificate** (it covers
+   `$DOMAIN`; add `*.$DOMAIN` too if you use subdomains).
+2. Save the certificate to `certs/origin.pem` and the private key to `certs/origin.key`
+   beside this file — `certs/` is git-ignored.
+3. In `.env`, set `CLOUDFLARE_ORIGIN_CERT=true`, then `docker compose up -d`.
+4. Set the edge to **SSL/TLS → Overview → Full (strict)**.
+
+Caddy then serves that cert and skips ACME; the cert is valid for years, so nothing
+renews. (Prefer real Let's Encrypt certs with the proxy on? Give Caddy a Cloudflare API
+token and the DNS-01 challenge instead — that needs a Caddy build with the Cloudflare DNS
+module, which the Origin cert avoids.) If you only ever run **DNS-only (grey cloud)**,
+ignore all of this: the default Let's Encrypt setup is correct.
+
+### WebSockets
+
+The gateway (`/gateway`) and voice signalling (`/livekit`) are WebSockets on 443, which
+Cloudflare proxies — WebSockets are on by default (**Network → WebSockets**). The gateway
+pings every ~54 s, under Cloudflare's ~100 s idle cutoff, so a quiet connection stays up;
+nothing extra is needed once the certificate above is sorted. Do **not** switch the domain
+to "Cache Everything": the client's `index.html` and `config.js` are served `no-cache` and
+must stay that way.
+
+### Real client IP
+
+With the proxy on there is an extra hop, so unless the API is told to trust it every
+request looks like it came from a Cloudflare edge — and per-IP rate limits bucket all your
+users together. Set `TRUSTED_PROXIES` in `.env` to `private` plus
+[Cloudflare's ranges](https://www.cloudflare.com/ips/); `.env.example` has the current list
+ready to paste. To stop anyone reaching the HTTP surface by hitting the origin IP directly,
+add [Authenticated Origin Pulls](https://developers.cloudflare.com/ssl/origin-configuration/authenticated-origin-pull/).
+
+### Voice and video media
+
+The one thing the proxy cannot carry at all is **WebRTC media**. Cloudflare forwards HTTP
+and WebSockets, not the media ports, so clients reach your host **directly** for audio and
+video:
+
+- Keep `7881/tcp`, `50000-50200/udp`, `3478/udp` and `5349/tcp` open on the host firewall.
+- Set `LIVEKIT_NODE_IP` to the server's real public IP. Behind the proxy LiveKit cannot
+  infer it — the domain now resolves to Cloudflare — so without it calls connect and carry
+  no audio. With it, clients get direct UDP candidates plus a TCP fallback on 7881 for
+  UDP-blocked networks.
+- The bundled TURN relay is advertised at `turn:$DOMAIN:3478`; with `$DOMAIN` proxied that
+  name resolves to Cloudflare, which does not carry UDP 3478, so the relay path is dead.
+  The direct UDP and TCP candidates above cover the same clients, so this only matters for
+  the rare peer that can reach a relay but nothing direct — give it one on a **DNS-only**
+  subdomain (`rtc.$DOMAIN` → your IP) if you need it.
+
+Because media is direct, **the origin's IP is visible to anyone in a call** — Cloudflare
+cannot hide it for voice. The web, API and gateway stay behind the proxy (WAF, L7 DDoS);
+the media endpoint does not. If hiding the origin is a hard requirement, voice can't run on
+a self-hosted SFU behind Cloudflare's standard proxy.
 
 ## Updating
 
