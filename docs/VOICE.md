@@ -240,6 +240,19 @@ SFU needs them to route, so frame sizes and timing are visible; the picture and 
 not. Verified by pointing a client with valid credentials but no key at a call: it
 receives every packet and decodes none of them, rendering noise instead of the picture.
 
+## Calls across instances
+
+A PM or group shared with another instance is hosted by the room's **origin** instance:
+its LiveKit carries the media, it mints every token, and it owns the voice states and the
+call object. The other instances mirror those over federation (see
+`FEDERATION.md`, "Calls across instances"), so everything above - states, events, ringing,
+`call_started` / `call_ended` system messages - looks the same there. Two details differ:
+participants in such rooms are named `<federated id>.<session>` towards LiveKit (the
+`identity` field on a voice state carries it, and the client maps it back through its
+federated-id registry), and the join result's `url` is the origin's LiveKit, which the
+user's browser must be able to reach. The origin's reconciler and webhooks are the only
+ones that matter for these rooms; a mirror never reconciles them against its own LiveKit.
+
 ## Not done
 
 - Stage-style rooms, soundboards, and "Go Live" stream discovery.

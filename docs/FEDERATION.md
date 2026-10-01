@@ -114,6 +114,8 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `POST /rooms/typing` | typing indicator |
 | `POST /rooms/messages`, `PATCH /rooms/messages`, `POST /rooms/messages/delete` | message lifecycle (including system messages) |
 | `POST /rooms/reactions`, `POST /rooms/reactions/delete` | a reaction added to / withdrawn from a message |
+| `POST /rooms/voice/join`, `/leave`, `/self`, `/ring`, `/decline` | asked of the room's origin: a token for the call it hosts, and the caller's later actions |
+| `POST /rooms/voice/state`, `POST /rooms/voice/call` | pushed by the origin: a voice state changed or left, the call started / changed / ended |
 | `POST /keys/query`, `POST /keys/claim`, `POST /to_device` | E2EE key exchange for the receiver's users |
 
 Authorization rules on the receiving side: an instance may only announce rooms it created,
@@ -166,6 +168,24 @@ edits and deletes, and applied with the same per-message cap and gateway events 
 local reaction. A `custom:<id>` reaction is the origin's custom emoji id; a client that
 does not know that emoji shows an empty pill, as it already does for a local reaction with
 an emoji from a space the viewer is not in.
+
+### Calls across instances
+
+LiveKit servers do not federate, so a call in a federated PM or group runs on **one**
+LiveKit: the one belonging to the room's *origin* instance (every peer knows it from the
+room mapping). The origin mints every token, owns the voice states and the ringing call
+object, and relays each change to the other instances in the room, which mirror them so
+their READY payload, `GET /rooms/:id/voice/states` and gateway events work unchanged. A
+user on another instance joins through their own API as usual: it asks the origin
+(`POST /rooms/voice/join`, synchronous) and hands back the origin's public LiveKit URL
+and token; leave, mute/camera flags, ring and decline are relayed to the origin the same
+way. Participants in such rooms are named `<federated id>.<session>` towards LiveKit, so a
+client on any instance can tell who a participant is; the E2EE media keys reach them over
+the federated to-device channel like all other Olm traffic. Consequences: the origin's
+`LIVEKIT_URL` must be reachable from the other instance's users, both instances need
+voice configured (an instance without LiveKit has no voice routes at all), and if the
+origin has no LiveKit the call cannot happen in that room. Space voice rooms do not
+federate, like spaces themselves.
 
 ### End-to-end encryption across instances
 
