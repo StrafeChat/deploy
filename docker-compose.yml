@@ -25,8 +25,11 @@
 #   7881/tcp            ICE over TCP, for clients whose network blocks UDP
 #   50000-50200/udp     media
 #   3478/udp            the built-in TURN relay, for clients behind strict NATs
-#   5349/tcp            TURN/TLS - Firefox needs a working TLS candidate even when UDP
-#                       is not blocked, or it fails to connect at all
+#
+# Email (verification links, password resets) is optional. COMPOSE_PROFILES=mail starts the
+# bundled outbound-only relay (`mail` below, see README "Email"); or point SMTP_* in .env at
+# a mail server you already have. Either way the API needs outbound port 25 to be open on
+# this host only for the bundled relay.
 
 services:
   caddy:
@@ -41,8 +44,14 @@ services:
       # instance that boots, serves no certificate and federates as "". Fail instead.
       DOMAIN: ${DOMAIN:?not set - run ./setup.sh, or cp .env.example .env and fill it in}
       ACME_EMAIL: ${ACME_EMAIL:-}
+      # Behind Cloudflare's proxy, Let's Encrypt can't validate: set CLOUDFLARE_ORIGIN_CERT=true
+      # and drop a Cloudflare Origin cert at certs/origin.pem + certs/origin.key. This expands
+      # to a `tls` directive the Caddyfile serves; empty otherwise (Let's Encrypt). See README.
+      CADDY_TLS: ${CLOUDFLARE_ORIGIN_CERT:+tls /certs/origin.pem /certs/origin.key}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Cloudflare Origin cert, if you use one (certs/ is git-ignored). Harmless when absent.
+      - ./certs:/certs:ro
       - caddy-data:/data
       - caddy-config:/config
     depends_on:
@@ -138,8 +147,10 @@ services:
       REDIS_CACHE_ENABLED: "true"
       REDIS_CACHE_PREFIX: "equinox:"
       # Caddy sits on the compose network; trust its X-Forwarded-For so per-IP rate
-      # limits and session IPs see real clients instead of the proxy.
-      TRUSTED_PROXIES: private
+      # limits and session IPs see real clients instead of the proxy. Behind Cloudflare,
+      # also trust Cloudflare's ranges so the real client IP survives the extra hop -
+      # set TRUSTED_PROXIES in .env to "private,<Cloudflare ranges>" (see README).
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-private}
       CORS_ORIGINS: https://${DOMAIN}
       STARGATE_ALLOWED_ORIGINS: https://${DOMAIN}
       # Registration.
@@ -160,7 +171,18 @@ services:
       # What the browser is told to solve against, and how this container reaches Cap.
       CAP_API_URL: ${CAP_API_URL:-}
       CAP_INTERNAL_URL: http://cap:3000
-      EMAIL: "false"
+      # Email: verification links for new accounts and password-reset links. Off while
+      # SMTP_HOST is empty. setup.sh points these at the bundled relay (SMTP_HOST=mail,
+      # SMTP_TLS=none - plaintext is fine on the private `mail` network below) or at a
+      # server of yours. MAIL_FROM defaults to noreply@$DOMAIN inside the API.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_TLS: ${SMTP_TLS:-starttls}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-StrafeChat}
+      EMAIL_VERIFICATION: ${EMAIL_VERIFICATION:-false}
       # Nebula: internal URL for uploads, public URL embedded in asset links.
       NEBULA_BASE_URL: http://nebula:4010
       NEBULA_PUBLIC_URL: https://${DOMAIN}/cdn
@@ -182,6 +204,11 @@ services:
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
     volumes:
       - federation-data:/data
+    # The API is the one service that can reach the mail relay (the `mail` network is
+    # shared with nothing else), which is what lets the relay accept mail without a login.
+    networks:
+      - default
+      - mail
 
   equinox-stargate:
     build:
@@ -238,16 +265,6 @@ services:
       - "7881:7881/tcp"
       - "50000-50200:50000-50200/udp"
       - "3478:3478/udp"
-      # TURN/TLS. Firefox's ICE stack does not tolerate a TURN server that advertises
-      # only a UDP candidate as gracefully as Chromium does - with udp_port alone,
-      # Firefox participants fail to connect at all ("could not establish pc
-      # connection") while Chrome/Edge connect fine on the exact same network. This
-      # closes that gap by giving every client a working TLS candidate too.
-      - "5349:5349/tcp"
-    volumes:
-      # Reuses the certificate Caddy already obtains for $DOMAIN, read-only, rather
-      # than running a second ACME client for a service that only needs the files.
-      - caddy-data:/caddy-certs:ro
     environment:
       LIVEKIT_CONFIG: |
         port: 7880
@@ -269,9 +286,6 @@ services:
           enabled: true
           udp_port: 3478
           domain: ${DOMAIN}
-          tls_port: 5349
-          cert_file: /caddy-certs/certificates/acme-v02.api.letsencrypt.org-directory/${DOMAIN}/${DOMAIN}.crt
-          key_file: /caddy-certs/certificates/acme-v02.api.letsencrypt.org-directory/${DOMAIN}/${DOMAIN}.key
         room:
           empty_timeout: 60
           departure_timeout: 10
@@ -296,6 +310,33 @@ services:
       ADMIN_KEY: ${CAP_ADMIN_KEY:-}
       REDIS_URL: redis://redis:6379/3
 
+  # The bundled outbound mail relay (maddy), for instances that send their own email:
+  #   COMPOSE_PROFILES=mail docker compose up -d
+  # Send-only: it takes mail from the API, signs it with the DKIM key it generates on first
+  # start, and delivers it to the recipients' servers itself (outbound port 25). It
+  # publishes no port, receives nothing and has no mailboxes; the API reaches it over the
+  # `mail` network, which no other container is on. The DKIM record to publish:
+  #   docker compose exec mail cat /data/dkim_keys/$DOMAIN_$MAIL_DKIM_SELECTOR.dns
+  # DNS checklist (A + PTR for MAIL_HOSTNAME, SPF, DKIM, DMARC) in docs/EMAIL.md.
+  mail:
+    image: foxcpp/maddy:0.9
+    profiles: ["mail"]
+    restart: unless-stopped
+    environment:
+      MAIL_DOMAIN: ${DOMAIN}
+      MAIL_HOSTNAME: ${MAIL_HOSTNAME:-mail.${DOMAIN}}
+      MAIL_DKIM_SELECTOR: ${MAIL_DKIM_SELECTOR:-strafe}
+    volumes:
+      - ./mail/maddy.conf:/data/maddy.conf:ro
+      - mail-data:/data
+    networks:
+      - mail
+
+networks:
+  default:
+  # Private link between the API and the mail relay; nothing else is attached.
+  mail:
+
 volumes:
   caddy-data:
   caddy-config:
@@ -303,3 +344,4 @@ volumes:
   redis-data:
   nebula-data:
   federation-data:
+  mail-data:
