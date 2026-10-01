@@ -106,12 +106,14 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `GET /users/lookup?username&discriminator` | resolve a handle to a profile |
 | `GET /users/:id` | profile by origin id |
 | `POST /users/update` | a user's profile changed |
+| `POST /users/presence` | how a user now appears to others, for the receiver's users who are their friends |
 | `POST /relationships` | a friend request, acceptance or teardown from the sender's user to one of the receiver's |
 | `POST /rooms` | the origin announces a new room and its participants |
 | `PUT /rooms/participants` | full member set after add/remove |
 | `PATCH /rooms` | name / E2EE setting changed |
 | `POST /rooms/typing` | typing indicator |
 | `POST /rooms/messages`, `PATCH /rooms/messages`, `POST /rooms/messages/delete` | message lifecycle (including system messages) |
+| `POST /rooms/reactions`, `POST /rooms/reactions/delete` | a reaction added to / withdrawn from a message |
 | `POST /keys/query`, `POST /keys/claim`, `POST /to_device` | E2EE key exchange for the receiver's users |
 
 Authorization rules on the receiving side: an instance may only announce rooms it created,
@@ -121,7 +123,9 @@ instance's user is fetched from their home before a shadow is created.
 
 Relays are fire-and-forget: the local write and gateway event happen first, then each peer
 is called in the background with a 30-second timeout; failures are logged, not surfaced.
-There is no retry queue yet (see "Not covered").
+Relays to one peer are sent in order from an in-memory per-peer queue (so a message sent
+right after its room was created cannot overtake the room announce), but the queue is
+not persisted and nothing is retried (see "Not covered").
 
 ### Friends across instances
 
@@ -138,6 +142,30 @@ nothing. Because shadows are ordinary `users` rows, the friends list, pending re
 nicknames need no extra tables; `home_domain` on the relationship's user object is what the
 client renders as `@domain`. Profile changes are relayed to the home instance of every
 remote friend, not only to instances sharing a room.
+
+### Presence across instances
+
+Whenever a user's presence changes - the gateway marking them online or offline, or a
+status/custom-status change through `PATCH /users/@me` - the instance tells the home
+instance of each remote *friend* how the user now appears to others (`POST
+/users/presence`; invisible already reads as offline). The receiver writes it to the
+shadow row and publishes `PRESENCE_UPDATE` to the shadow's local friends, so the status
+dot moves live and the next READY carries it. A freshly accepted friendship exchanges
+presence in both directions so the new friend starts with a real status. Friends only,
+which is who the local gateway tells as well; people who merely share a PM are not told,
+matching local behaviour. The gateway process therefore needs the same federation
+configuration and signing key as the API (the compose file gives both services the
+`federation-data` volume); it loads the key but never creates it, so the API always owns
+the identity. If a peer goes down mid-session its users stay at their last known status.
+
+### Reactions across instances
+
+Reactions on messages in federated PMs and groups are relayed (`POST /rooms/reactions`,
+`POST /rooms/reactions/delete`) with the message referenced by origin id, exactly like
+edits and deletes, and applied with the same per-message cap and gateway events as a
+local reaction. A `custom:<id>` reaction is the origin's custom emoji id; a client that
+does not know that emoji shows an empty pill, as it already does for a local reaction with
+an emoji from a space the viewer is not in.
 
 ### End-to-end encryption across instances
 
@@ -183,9 +211,8 @@ both directions. `GET /federation/peers` (session auth) lists instances seen so 
 - **Spaces** do not federate: a user can only join spaces on their own instance. The
   mirrored-room model extends to space channels in principle, but roles, permissions and
   member lists would need an authoritative-origin design first.
-- **Presence and read receipts** are not relayed (remote users, friends included, show as
-  offline).
-- **Reactions** are not relayed: a remote participant never sees them.
+- **Read receipts** are not relayed, and presence reaches remote *friends* only (not
+  people who merely share a PM).
 - **Delivery guarantees**: a peer that is down when a message is relayed misses it; there is
   no outbox with retries. Adding one is the natural next step (persist the payload, retry
   with backoff, mark the peer degraded).
