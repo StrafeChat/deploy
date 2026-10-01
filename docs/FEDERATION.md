@@ -83,8 +83,11 @@ per instance. Two mapping tables tie the copies together:
   `(origin_domain, origin_message_id)` for messages that crossed an instance boundary
   (edits, deletes and replies reference messages by origin id).
 
-Only PMs and group PMs federate. Space channels stay local to the instance hosting the
-space (see "Not covered").
+PMs and group PMs are mirrored this way between the instances of their participants.
+Space channels are mirrored too, but with one difference: a channel keeps the **origin's
+message ids** on every instance (every message in it is stored by the origin first), so
+replies, reactions and ordering agree everywhere without a lookup. See "Spaces across
+instances".
 
 ### Server-to-server protocol
 
@@ -116,12 +119,22 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `POST /rooms/reactions`, `POST /rooms/reactions/delete` | a reaction added to / withdrawn from a message |
 | `POST /rooms/voice/join`, `/leave`, `/self`, `/ring`, `/decline` | asked of the room's origin: a token for the call it hosts, and the caller's later actions |
 | `POST /rooms/voice/state`, `POST /rooms/voice/call` | pushed by the origin: a voice state changed or left, the call started / changed / ended |
+| `GET /spaces/invites/:code`, `POST /spaces/join`, `POST /spaces/leave`, `POST /spaces/invites` | asked of a space's origin: preview an invite, redeem it for one of the asking instance's users (the answer is the whole space), leave, mint an invite |
+| `POST /spaces/messages`, `PATCH /spaces/messages`, `POST /spaces/messages/delete`, `POST /spaces/reactions[/delete]`, `POST /spaces/messages/list`, `POST /spaces/messages/get` | asked of a space's origin by a mirror on behalf of a member: write into, react in and read a channel |
+| `POST /spaces/manage` | asked of a space's origin by a mirror on behalf of a member who may manage it: one of `space.patch`, `space.image`, `role.create/update/delete`, `member.roles/kick/ban/unban`, `bans.list`, `invites.list`, `invite.delete`, `audit.list`, `room.create/update/delete`, `rooms.reorder`, `room.move`, `override.put/delete`, `emoji.create/rename/delete`, `space.transfer`, `space.delete`; answers with the result and the relays captured for the asker |
+| `POST /spaces/sync` | asked of a space's origin by a mirror: a fresh snapshot to reconcile against |
+| `POST /spaces/update`, `/spaces/members`, `/spaces/roles`, `/spaces/rooms`, `/spaces/emoji`, `/spaces/delete` | pushed by the origin to every instance mirroring the space: settings, membership and roles, roles, channels and overrides (and their order), custom emoji, deletion |
 | `POST /keys/query`, `POST /keys/claim`, `POST /to_device` | E2EE key exchange for the receiver's users |
 
 Authorization rules on the receiving side: an instance may only announce rooms it created,
 relay messages/edits/deletes/typing for its **own** users, touch rooms one of its users
-participates in, and act on relationships between its **own** user and one of ours. Profiles in payloads are trusted only for the sender's own users; a third
-instance's user is fetched from their home before a shadow is created.
+participates in, and act on relationships between its **own** user and one of ours. For a
+space, only the origin may push changes to a mirror, and only an instance that mirrors the
+space (one of its users is a member) may ask the origin for anything in it; the acting
+user must belong to the asking instance. Profiles in payloads are trusted only for the
+sender's own users; a third instance's user is fetched from their home before a shadow
+is created (the origin of a space relays messages from members of any instance, so a
+mirror may fetch a sender's profile from a third instance the first time).
 
 Relays are fire-and-forget: the local write and gateway event happen first, then each peer
 is called in the background with a 30-second timeout; failures are logged, not surfaced.
@@ -187,6 +200,88 @@ voice configured (an instance without LiveKit has no voice routes at all), and i
 origin has no LiveKit the call cannot happen in that room. Space voice rooms do not
 federate, like spaces themselves.
 
+### Spaces across instances
+
+A space is hosted by the instance that created it, its **origin**, which stays the one
+authority for membership, roles, permissions, channels, bans and settings - the
+Discord-shaped model, chosen over Matrix-style distributed state because every check a
+space needs (role hierarchy, channel overrides, slowmode, bans) already runs on one
+server here and would otherwise have to be resolved between servers that disagree.
+
+Every other instance with a member keeps a **mirror**: its own `spaces` row, room rows,
+roles, overrides and member rows under local ids, so READY, local permission checks,
+unread state, search and the gateway work unchanged for its users. `federated_spaces`
+(and the room mapping tables for each channel) tie the mirror to the origin;
+`federated_space_peers` is kept by the origin: which instances mirror each space.
+Role ids are the origin's on every instance (they only need to be unique within the
+space), room and space ids are local and mapped, members are shadow users, and - unlike
+a PM - a channel's messages keep the origin's ids everywhere.
+
+- **Joining.** An invite for a space on another instance is `code@domain`. The joining
+  instance asks the origin to redeem it (`POST /spaces/join`) on behalf of its user; the
+  origin applies the same checks a local join gets (invite validity, bans), adds the
+  user as a shadow member, and answers with the whole space - settings, roles, channels
+  with overrides, members with profiles (capped at 5000). The joiner builds the mirror
+  from that in one step and is a member from then on. A second user of the same
+  instance just gets added to the existing mirror.
+- **Writes go to the origin.** A member on a mirror sending a message, editing or
+  deleting one, reacting, leaving, or minting an invite has their instance ask the origin
+  (`/spaces/messages`, `/spaces/reactions`, `/spaces/leave`, `/spaces/invites`). The
+  origin runs its usual checks - channel permissions, slowmode, @everyone gating, message
+  ownership for edits, bans - stores the result, relays it to every *other* mirror, and
+  answers; the asking instance applies the answer itself (it is skipped in that fan-out
+  so nothing arrives twice). The origin's refusal is passed through to the member with
+  its status and reason. Typing goes to the origin the same way and is passed on.
+- **Reads come from the origin.** A mirror only holds what was relayed since one of its
+  users joined, so a channel's history (`GET /rooms/:id/messages`) is read from the
+  origin, as the asking member may see it, and kept locally as it is read; if the origin
+  cannot be reached the local copy is served instead. The member list, roles and channel
+  structure are read locally - they are complete.
+- **Changes flow down.** Settings, icon/banner, role create/update/delete, member
+  roles, channel create/update/delete and reorder, overrides, kicks, bans and the space's
+  deletion are pushed by the origin to every mirror, which applies them and emits the
+  same gateway events its own clients would see for a local change. A kicked, banned or
+  departing member's instance drops the mirror once no local member is left; a banned
+  user's rejoin is refused by the origin.
+- **Management goes to the origin too.** A member on a mirror who may manage the space
+  (by the mirrored roles, which are the origin's) changes settings, icon and banner,
+  roles and members' roles, channels, their order and overrides, custom emoji, invites,
+  kicks, bans and ownership, or deletes the space, through one call: `POST
+  /spaces/manage {op, params}`. The origin runs the operation as that member with every
+  check a local member gets (permissions, role hierarchy, owner-only rules, the typed
+  name on delete), and answers with the operation's result **plus the relays the
+  operation produced for the asking instance** - captured instead of sent. The mirror
+  applies those exactly as it applies relays that arrive on their own, so after the call
+  its state is what every other mirror has and the REST reply is served from it. Lists
+  the mirror does not hold (bans, invites, the audit log) are read the same way, with
+  users mapped to local ids and invite codes returned as `code@origin`. Bots and OAuth
+  installs stay instance-local.
+- **Custom emoji** are part of the snapshot and relayed on create/rename/delete, keeping
+  the origin's ids, so `<:name:id>` renders on every instance and the picker shows them;
+  an emoji uploaded from a mirror is stored on that instance's CDN and recorded by the
+  origin with its URL.
+- **Resync.** A mirror asks its origin for a fresh snapshot (`POST /spaces/sync`) soon
+  after the API starts and every half hour, and reconciles settings, roles, channels,
+  members and emoji against it - the catch-up for relays missed while the instance was
+  down. A member can ask for one any time (`POST /spaces/:id/resync` on their own
+  instance). A space the origin no longer has is dropped.
+- **Presence and profiles** of a member reach every instance sharing a space with them,
+  not only friends; the receiver fans them out to the space like a local change. A
+  joining member's status travels with the join, and the snapshot carries every
+  member's.
+- **Voice channels** of a federated space run on the origin's LiveKit exactly like a
+  call in a federated PM (the origin mints the token, mirrors keep the states).
+- **Clients** see a `federation: {origin_domain, origin_id}` field on a mirrored space
+  and on each of its rooms, show "hosted on domain" from it, render remote members'
+  handles with their domain, and accept `code@domain` wherever an invite code goes
+  (invite page, pasted links, the "have an invite?" box). Managing a mirrored space
+  needs no client changes: the same settings pages work, with the origin's answer.
+
+What the origin does not do: it never trusts a mirror's permission decisions (a mirror's
+local checks are a convenience), never lets one instance act for another's users, and
+never accepts a mirror's claims about structure. What a mirror cannot do: read pre-join
+history while the origin is down, and install bots into a space hosted elsewhere.
+
 ### End-to-end encryption across instances
 
 The client builds the crypto engine's ids from the identity registry
@@ -228,11 +323,14 @@ both directions. `GET /federation/peers` (session auth) lists instances seen so 
 
 ## Not covered (yet)
 
-- **Spaces** do not federate: a user can only join spaces on their own instance. The
-  mirrored-room model extends to space channels in principle, but roles, permissions and
-  member lists would need an authoritative-origin design first.
-- **Read receipts** are not relayed, and presence reaches remote *friends* only (not
-  people who merely share a PM).
+- **Spaces, the rest of it**: member lists are sent whole (capped at 5000) rather than
+  paged; a mirror that cannot reach the origin serves only the history it has seen; when
+  the last local member leaves, the mirror and its local copy of the history are
+  dropped; a bot can only be installed into a space from the instance hosting it; a
+  member's presence reaches the instances sharing a space with them but is not re-fanned
+  by the origin to third instances that only mirror the space.
+- **Read receipts** are not relayed, and presence reaches remote friends and instances
+  sharing a space only (not people who merely share a PM).
 - **Delivery guarantees**: a peer that is down when a message is relayed misses it; there is
   no outbox with retries. Adding one is the natural next step (persist the payload, retry
   with backoff, mark the peer degraded).
@@ -247,9 +345,12 @@ both directions. `GET /federation/peers` (session auth) lists instances seen so 
 - `equinox/internal/federation/` - the engine: identity parsing, signing key, discovery,
   signed client, request-verifying middleware, mapping repository, outbound relays,
   inbound handlers.
-- `equinox/internal/modules/{rooms,messages,devices,users,relationships}` - small
-  `Federator`/`KeyRouter` hook interfaces the engine implements; nil when federation is off.
-- `equinox/migrations/021_federation.cql` - shadow-user columns and mapping tables.
+- `equinox/internal/modules/{rooms,messages,devices,users,relationships,spaces,voice}` -
+  small `Federator`/`KeyRouter` hook interfaces the engine implements; nil when federation
+  is off. `spaces/federation.go` holds the mirror side (building and updating a mirror),
+  `federation/spaces.go` the wire types and both directions of the space protocol.
+- `equinox/migrations/021_federation.cql` - shadow-user columns and mapping tables;
+  `035_federated_spaces.cql` - space mappings and the origin's peer list.
 - `web.strafe.chat/src/stores/{instance,federationIds}.ts`, `src/lib/e2ee/constants.ts` -
   client-side identity.
 - `deploy/` - production compose, Caddyfile, env template, runbook.
