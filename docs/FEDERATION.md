@@ -106,6 +106,7 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `GET /users/lookup?username&discriminator` | resolve a handle to a profile |
 | `GET /users/:id` | profile by origin id |
 | `POST /users/update` | a user's profile changed |
+| `POST /relationships` | a friend request, acceptance or teardown from the sender's user to one of the receiver's |
 | `POST /rooms` | the origin announces a new room and its participants |
 | `PUT /rooms/participants` | full member set after add/remove |
 | `PATCH /rooms` | name / E2EE setting changed |
@@ -114,13 +115,29 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `POST /keys/query`, `POST /keys/claim`, `POST /to_device` | E2EE key exchange for the receiver's users |
 
 Authorization rules on the receiving side: an instance may only announce rooms it created,
-relay messages/edits/deletes/typing for its **own** users, and touch rooms one of its users
-participates in. Profiles in payloads are trusted only for the sender's own users; a third
+relay messages/edits/deletes/typing for its **own** users, touch rooms one of its users
+participates in, and act on relationships between its **own** user and one of ours. Profiles in payloads are trusted only for the sender's own users; a third
 instance's user is fetched from their home before a shadow is created.
 
 Relays are fire-and-forget: the local write and gateway event happen first, then each peer
 is called in the background with a 30-second timeout; failures are logged, not surfaced.
 There is no retry queue yet (see "Not covered").
+
+### Friends across instances
+
+A friend request to `alice#0001@chat.example.com` resolves the handle through
+`GET /users/lookup` on her instance (creating or refreshing her shadow row), stores the
+request locally against the shadow id, and relays it with `POST /relationships`
+(`action: request`). Her instance stores it the other way round - from *your* shadow row
+to her - and shows it to her like any local request. Accepting relays `accept`; declining,
+withdrawing, unfriending and blocking all relay a single `remove`, and the receiving side
+tears down whatever still stands (its own state says which it was). Two requests that cross
+become a friendship on both sides. Blocks are never announced: a request from someone the
+recipient has blocked is accepted with `204` and dropped, so the sender's instance learns
+nothing. Because shadows are ordinary `users` rows, the friends list, pending requests and
+nicknames need no extra tables; `home_domain` on the relationship's user object is what the
+client renders as `@domain`. Profile changes are relayed to the home instance of every
+remote friend, not only to instances sharing a room.
 
 ### End-to-end encryption across instances
 
@@ -166,9 +183,9 @@ both directions. `GET /federation/peers` (session auth) lists instances seen so 
 - **Spaces** do not federate: a user can only join spaces on their own instance. The
   mirrored-room model extends to space channels in principle, but roles, permissions and
   member lists would need an authoritative-origin design first.
-- **Friend requests / relationships** stay local. Reaching someone on another instance is
-  done by starting a PM with their handle.
-- **Presence and read receipts** are not relayed (remote users show as offline).
+- **Presence and read receipts** are not relayed (remote users, friends included, show as
+  offline).
+- **Reactions** are not relayed: a remote participant never sees them.
 - **Delivery guarantees**: a peer that is down when a message is relayed misses it; there is
   no outbox with retries. Adding one is the natural next step (persist the payload, retry
   with backoff, mark the peer degraded).
@@ -183,8 +200,8 @@ both directions. `GET /federation/peers` (session auth) lists instances seen so 
 - `equinox/internal/federation/` - the engine: identity parsing, signing key, discovery,
   signed client, request-verifying middleware, mapping repository, outbound relays,
   inbound handlers.
-- `equinox/internal/modules/{rooms,messages,devices,users}` - small `Federator`/`KeyRouter`
-  hook interfaces the engine implements; nil when federation is off.
+- `equinox/internal/modules/{rooms,messages,devices,users,relationships}` - small
+  `Federator`/`KeyRouter` hook interfaces the engine implements; nil when federation is off.
 - `equinox/migrations/021_federation.cql` - shadow-user columns and mapping tables.
 - `web.strafe.chat/src/stores/{instance,federationIds}.ts`, `src/lib/e2ee/constants.ts` -
   client-side identity.
