@@ -104,6 +104,18 @@ ban the account or take the space down, and every action lands in the instance a
 The server never copies message text into a report: in an end-to-end encrypted room it
 cannot read it, and the reporter is told to paste it if they want it seen.
 
+### Discover
+
+Every instance has a **Discover** page (the compass below "Add a space" in the sidebar): a
+directory of the spaces and bots on that instance. Nothing is listed by itself - a
+space's managers apply from **Space settings → Discover** and a bot's owner from
+**Settings → Developers**, each with a tagline and a few tags, and the application lands
+on the dashboard's **Discover** tab, where an administrator approves or declines it (a
+note goes back to the applicant). A listed space can be joined from the page without an
+invite; a listed bot's card opens its install page. Listings are per instance: a space
+is listed where it is hosted, and an administrator can remove one at any time. Approvals,
+refusals and removals land in the instance audit log.
+
 ### Registration captcha
 
 Any instance open to the public should run one (`CAPTCHA=true`). Four providers:
