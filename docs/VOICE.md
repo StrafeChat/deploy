@@ -210,7 +210,11 @@ The server relays ciphertext. That means call keys inherit the text E2EE's prope
 real per-device sessions, and safety numbers as the out-of-band backstop against a server
 substituting device keys. The sender of an incoming key is taken from the Olm decryption,
 never from the payload, and a key claiming a LiveKit identity its sender doesn't own is
-dropped.
+dropped. The announcement names the call's room by its federated identity
+(`!origin:domain`, the same on every instance) alongside the sender's local id: a PM or a
+mirrored channel has a different local id on each instance, and a receiver only installs
+a key for the call it is in, so a key filed under someone else's local id would sit
+unused and the peer's media would never decrypt.
 
 **Rotation on membership change.** Joining or leaving makes everyone roll their key onto
 the next ring slot and redistribute (debounced, so a burst of joins costs one rotation;

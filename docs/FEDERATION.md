@@ -121,7 +121,7 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `POST /rooms/voice/state`, `POST /rooms/voice/call` | pushed by the origin: a voice state changed or left, the call started / changed / ended |
 | `GET /spaces/invites/:code`, `POST /spaces/join`, `POST /spaces/leave`, `POST /spaces/invites` | asked of a space's origin: preview an invite, redeem it for one of the asking instance's users (the answer is the whole space), leave, mint an invite |
 | `POST /spaces/messages`, `PATCH /spaces/messages`, `POST /spaces/messages/delete`, `POST /spaces/reactions[/delete]`, `POST /spaces/messages/list`, `POST /spaces/messages/get` | asked of a space's origin by a mirror on behalf of a member: write into, react in and read a channel |
-| `POST /spaces/manage` | asked of a space's origin by a mirror on behalf of a member who may manage it: one of `space.patch`, `space.image`, `role.create/update/delete`, `member.roles/kick/ban/unban`, `bans.list`, `invites.list`, `invite.delete`, `audit.list`, `room.create/update/delete`, `rooms.reorder`, `room.move`, `override.put/delete`, `emoji.create/rename/delete`, `space.transfer`, `space.delete`; answers with the result and the relays captured for the asker |
+| `POST /spaces/manage` | asked of a space's origin by a mirror on behalf of a member who may manage it: one of `space.patch`, `space.image`, `role.create/update/delete`, `member.roles/kick/ban/unban`, `bans.list`, `invites.list`, `invite.delete`, `audit.list`, `room.create/update/delete`, `rooms.reorder`, `room.move`, `override.put/delete`, `emoji.create/rename/delete`, `space.transfer`, `space.delete`, `bot.install`, `member.add`; answers with the result and the relays captured for the asker |
 | `POST /spaces/sync` | asked of a space's origin by a mirror: a fresh snapshot to reconcile against |
 | `POST /spaces/members/list` | asked of a space's origin by a mirror: the next page of members (the join and sync replies carry the first page and a cursor) |
 | `POST /spaces/update`, `/spaces/members`, `/spaces/roles`, `/spaces/rooms`, `/spaces/emoji`, `/spaces/peers`, `/spaces/delete` | pushed by the origin to every instance mirroring the space: settings, membership and roles, roles, channels and overrides (and their order), custom emoji, which instances are in the space, deletion |
@@ -206,11 +206,14 @@ user on another instance joins through their own API as usual: it asks the origi
 and token; leave, mute/camera flags, ring and decline are relayed to the origin the same
 way. Participants in such rooms are named `<federated id>.<session>` towards LiveKit, so a
 client on any instance can tell who a participant is; the E2EE media keys reach them over
-the federated to-device channel like all other Olm traffic. Consequences: the origin's
+the federated to-device channel like all other Olm traffic, and a key announcement names
+the call's room by its federated identity (`!origin:domain`), never by a local id - a PM
+or a mirrored channel has a different local id on every instance, and a key filed under
+the sender's id would never match the receiver's call. Consequences: the origin's
 `LIVEKIT_URL` must be reachable from the other instance's users, both instances need
 voice configured (an instance without LiveKit has no voice routes at all), and if the
-origin has no LiveKit the call cannot happen in that room. Space voice rooms do not
-federate, like spaces themselves.
+origin has no LiveKit the call cannot happen in that room. Voice channels of a federated
+space work the same way, on the space origin's LiveKit.
 
 ### Spaces across instances
 
@@ -268,8 +271,22 @@ a PM - a channel's messages keep the origin's ids everywhere.
   applies those exactly as it applies relays that arrive on their own, so after the call
   its state is what every other mirror has and the REST reply is served from it. Lists
   the mirror does not hold (bans, invites, the audit log) are read the same way, with
-  users mapped to local ids and invite codes returned as `code@origin`. Bots and OAuth
-  installs stay instance-local.
+  users mapped to local ids and invite codes returned as `code@origin`.
+- **Bots.** A bot is installed into a federated space by a member whose account lives on
+  the bot's instance: they approve the bot's consent screen there (the mirrored space is
+  listed as a target, marked with where it is hosted), and that instance asks the origin
+  (`bot.install`) to add the bot as that member, with the member's own grantable
+  permissions. The origin creates the bot's shadow, runs the install exactly as a local
+  one (Manage Space or Administrator required, the managed role at position 1, the
+  audit entry) and relays the member and the role to every mirror; on the bot's own
+  instance the member row is the bot itself, so its gateway connection gets the space in
+  READY and every relayed message in it, and what it posts goes to the origin like any
+  member's. Re-authorising re-applies permissions, kicking the bot (from any instance
+  with the right to) removes it and its role everywhere, and an app's `spaces.join`
+  (`member.add`) adds one of its instance's users through the origin the same way. No
+  instance can install another instance's bot or add another instance's users; a bot
+  cannot be added to a space hosted elsewhere by someone from a third instance, because
+  the consent happens where both the person and the bot live.
 - **Custom emoji** are part of the snapshot and relayed on create/rename/delete, keeping
   the origin's ids, so `<:name:id>` renders on every instance and the picker shows them;
   an emoji uploaded from a mirror is stored on that instance's CDN and recorded by the
@@ -306,7 +323,7 @@ a PM - a channel's messages keep the origin's ids everywhere.
 What the origin does not do: it never trusts a mirror's permission decisions (a mirror's
 local checks are a convenience), never lets one instance act for another's users, and
 never accepts a mirror's claims about structure. What a mirror cannot do: read pre-join
-history while the origin is down, and install bots into a space hosted elsewhere.
+history while the origin is down.
 
 ### End-to-end encryption across instances
 
@@ -353,8 +370,7 @@ when another instance builds or resyncs a mirror of a space hosted here.
 
 - **Spaces, the rest of it**: a mirror that cannot reach the origin serves only the
   history it has seen; when the last local member leaves, the mirror and its local copy
-  of the history are dropped; a bot can only be installed into a space from the instance
-  hosting it; a mirror holds at most 100,000 members.
+  of the history are dropped; a mirror holds at most 100,000 members.
 - **Read receipts** are not relayed, and presence reaches remote friends and instances
   sharing a space only (not people who merely share a PM).
 - **Several API replicas** would each deliver the same outbox entry (every receiver is
