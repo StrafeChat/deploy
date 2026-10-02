@@ -109,7 +109,7 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `GET /users/lookup?username&discriminator` | resolve a handle to a profile |
 | `GET /users/:id` | profile by origin id |
 | `POST /users/update` | a user's profile changed |
-| `POST /users/presence` | how a user now appears to others, for the receiver's users who are their friends |
+| `POST /users/presence` | how a user now appears to others, for the receiver's users who are their friends or share a space with them |
 | `POST /relationships` | a friend request, acceptance or teardown from the sender's user to one of the receiver's |
 | `POST /rooms` | the origin announces a new room and its participants |
 | `PUT /rooms/participants` | full member set after add/remove |
@@ -123,7 +123,8 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `POST /spaces/messages`, `PATCH /spaces/messages`, `POST /spaces/messages/delete`, `POST /spaces/reactions[/delete]`, `POST /spaces/messages/list`, `POST /spaces/messages/get` | asked of a space's origin by a mirror on behalf of a member: write into, react in and read a channel |
 | `POST /spaces/manage` | asked of a space's origin by a mirror on behalf of a member who may manage it: one of `space.patch`, `space.image`, `role.create/update/delete`, `member.roles/kick/ban/unban`, `bans.list`, `invites.list`, `invite.delete`, `audit.list`, `room.create/update/delete`, `rooms.reorder`, `room.move`, `override.put/delete`, `emoji.create/rename/delete`, `space.transfer`, `space.delete`; answers with the result and the relays captured for the asker |
 | `POST /spaces/sync` | asked of a space's origin by a mirror: a fresh snapshot to reconcile against |
-| `POST /spaces/update`, `/spaces/members`, `/spaces/roles`, `/spaces/rooms`, `/spaces/emoji`, `/spaces/delete` | pushed by the origin to every instance mirroring the space: settings, membership and roles, roles, channels and overrides (and their order), custom emoji, deletion |
+| `POST /spaces/members/list` | asked of a space's origin by a mirror: the next page of members (the join and sync replies carry the first page and a cursor) |
+| `POST /spaces/update`, `/spaces/members`, `/spaces/roles`, `/spaces/rooms`, `/spaces/emoji`, `/spaces/peers`, `/spaces/delete` | pushed by the origin to every instance mirroring the space: settings, membership and roles, roles, channels and overrides (and their order), custom emoji, which instances are in the space, deletion |
 | `POST /keys/query`, `POST /keys/claim`, `POST /to_device` | E2EE key exchange for the receiver's users |
 
 Authorization rules on the receiving side: an instance may only announce rooms it created,
@@ -136,11 +137,21 @@ sender's own users; a third instance's user is fetched from their home before a 
 is created (the origin of a space relays messages from members of any instance, so a
 mirror may fetch a sender's profile from a third instance the first time).
 
-Relays are fire-and-forget: the local write and gateway event happen first, then each peer
-is called in the background with a 30-second timeout; failures are logged, not surfaced.
-Relays to one peer are sent in order from an in-memory per-peer queue (so a message sent
-right after its room was created cannot overtake the room announce), but the queue is
-not persisted and nothing is retried (see "Not covered").
+Relays are fire-and-forget from the user's point of view: the local write and gateway
+event happen first, then the relay is queued, and a slow or absent peer never fails or
+delays the user's own request. Every relay but typing, presence and call state is written
+to `federation_outbox` before it is sent and deleted once the peer has taken it. One
+worker per peer sends that peer's entries in order (so a message sent right after its
+room was created cannot overtake the room announce) and, when the peer cannot be reached,
+retries with backoff (1 s doubling to 30 s) until it can - so a peer that was down gets
+everything it missed, in order, when it comes back, and a mirror converges without a
+resync. A reply the peer will only repeat (a 4xx other than 408, 425 and 429) drops the
+entry; an entry nobody could deliver in seven days expires. While a peer is unreachable
+its row in `GET /federation/peers` carries `last_error`, `last_failure` and `pending`
+(entries waiting), cleared by the next relay it takes. The API process drains the outbox;
+the gateway, which relays presence only, writes entries and wakes the API over Redis.
+Typing, presence and call state describe the moment and are superseded within seconds,
+so they are sent once, from memory, and dropped if the peer is away.
 
 ### Friends across instances
 
@@ -162,13 +173,14 @@ remote friend, not only to instances sharing a room.
 
 Whenever a user's presence changes - the gateway marking them online or offline, or a
 status/custom-status change through `PATCH /users/@me` - the instance tells the home
-instance of each remote *friend* how the user now appears to others (`POST
+instance of each remote *friend*, and every instance that shares a *space* with the user
+(see "Spaces across instances"), how the user now appears to others (`POST
 /users/presence`; invisible already reads as offline). The receiver writes it to the
-shadow row and publishes `PRESENCE_UPDATE` to the shadow's local friends, so the status
-dot moves live and the next READY carries it. A freshly accepted friendship exchanges
-presence in both directions so the new friend starts with a real status. Friends only,
-which is who the local gateway tells as well; people who merely share a PM are not told,
-matching local behaviour. The gateway process therefore needs the same federation
+shadow row and publishes `PRESENCE_UPDATE` to the shadow's local friends and shared
+spaces, so the status dot moves live and the next READY carries it. A freshly accepted
+friendship exchanges presence in both directions so the new friend starts with a real
+status. Friends and fellow space members only, which is who the local gateway tells as
+well; people who merely share a PM are not told, matching local behaviour. The gateway process therefore needs the same federation
 configuration and signing key as the API (the compose file gives both services the
 `federation-data` volume); it loads the key but never creates it, so the API always owns
 the identity. If a peer goes down mid-session its users stay at their last known status.
@@ -221,9 +233,11 @@ a PM - a channel's messages keep the origin's ids everywhere.
   instance asks the origin to redeem it (`POST /spaces/join`) on behalf of its user; the
   origin applies the same checks a local join gets (invite validity, bans), adds the
   user as a shadow member, and answers with the whole space - settings, roles, channels
-  with overrides, members with profiles (capped at 5000). The joiner builds the mirror
-  from that in one step and is a member from then on. A second user of the same
-  instance just gets added to the existing mirror.
+  with overrides, custom emoji, the other instances in the space, and the first page of
+  members with profiles plus a cursor for the rest (`POST /spaces/members/list`,
+  `FEDERATION_MEMBER_PAGE` members per page, 1000 by default, up to 100,000 members).
+  The joiner builds the mirror from that and is a member from then on. A second user of
+  the same instance just gets added to the existing mirror.
 - **Writes go to the origin.** A member on a mirror sending a message, editing or
   deleting one, reacting, leaving, or minting an invite has their instance ask the origin
   (`/spaces/messages`, `/spaces/reactions`, `/spaces/leave`, `/spaces/invites`). The
@@ -262,20 +276,32 @@ a PM - a channel's messages keep the origin's ids everywhere.
   origin with its URL.
 - **Resync.** A mirror asks its origin for a fresh snapshot (`POST /spaces/sync`) soon
   after the API starts and every half hour, and reconciles settings, roles, channels,
-  members and emoji against it - the catch-up for relays missed while the instance was
-  down. A member can ask for one any time (`POST /spaces/:id/resync` on their own
-  instance). A space the origin no longer has is dropped.
-- **Presence and profiles** of a member reach every instance sharing a space with them,
-  not only friends; the receiver fans them out to the space like a local change. A
-  joining member's status travels with the join, and the snapshot carries every
-  member's.
+  members (fetched page by page; if a page cannot be fetched the reconcile adds members
+  but removes none), emoji and the list of instances against it - the catch-up for
+  anything that went wrong while the instance was down, on top of the outbox replaying
+  the relays themselves. A member can ask for one any time (`POST /spaces/:id/resync` on
+  their own instance). A space the origin no longer has is dropped.
+- **Presence and profiles.** The origin keeps the list of instances in each space and
+  hands it to every mirror - in the snapshot, then `POST /spaces/peers` as instances come
+  and go - and a mirror stores it under its own space id. A member's home instance
+  therefore sends their presence and profile changes to every instance in the space
+  itself, the origin and the other mirrors alike, and no instance ever relays what
+  another instance's user is doing: `POST /users/presence` and `/users/update` keep the
+  rule that a peer speaks only for its own users with any number of instances, so a
+  space's origin cannot make one of its members look different elsewhere. A joining
+  member's status travels with the join, so the member-add every mirror gets already
+  carries it, and the snapshot carries every member's.
 - **Voice channels** of a federated space run on the origin's LiveKit exactly like a
   call in a federated PM (the origin mints the token, mirrors keep the states).
 - **Clients** see a `federation: {origin_domain, origin_id}` field on a mirrored space
   and on each of its rooms, show "hosted on domain" from it, render remote members'
   handles with their domain, and accept `code@domain` wherever an invite code goes
   (invite page, pasted links, the "have an invite?" box). Managing a mirrored space
-  needs no client changes: the same settings pages work, with the origin's answer.
+  needs no client changes: the same settings pages work, with the origin's answer. An
+  invite link opened on an instance where the visitor has no account offers "continue
+  on your instance": they name the instance their account is on (remembered for next
+  time) and are sent to `/invite/<code>@<origin>` there, where they are logged in - so a
+  plain link to a space on one instance works for someone whose account is on another.
 
 What the origin does not do: it never trusts a mirror's permission decisions (a mirror's
 local checks are a convenience), never lets one instance act for another's users, and
@@ -320,20 +346,20 @@ because its image URL is absolute, but the by-id lookup is local (falls back to 
 `FEDERATION_ALLOWLIST` (when non-empty, the only peers) and `FEDERATION_BLOCKLIST` apply to
 both directions. `GET /federation/peers` (session auth) lists instances seen so far.
 `FEDERATION_STATIC_PEERS` and `FEDERATION_ALLOW_INSECURE` exist for development only.
+`FEDERATION_MEMBER_PAGE` (default 1000, at most 1000) is how many members go in one page
+when another instance builds or resyncs a mirror of a space hosted here.
 
 ## Not covered (yet)
 
-- **Spaces, the rest of it**: member lists are sent whole (capped at 5000) rather than
-  paged; a mirror that cannot reach the origin serves only the history it has seen; when
-  the last local member leaves, the mirror and its local copy of the history are
-  dropped; a bot can only be installed into a space from the instance hosting it; a
-  member's presence reaches the instances sharing a space with them but is not re-fanned
-  by the origin to third instances that only mirror the space.
+- **Spaces, the rest of it**: a mirror that cannot reach the origin serves only the
+  history it has seen; when the last local member leaves, the mirror and its local copy
+  of the history are dropped; a bot can only be installed into a space from the instance
+  hosting it; a mirror holds at most 100,000 members.
 - **Read receipts** are not relayed, and presence reaches remote friends and instances
   sharing a space only (not people who merely share a PM).
-- **Delivery guarantees**: a peer that is down when a message is relayed misses it; there is
-  no outbox with retries. Adding one is the natural next step (persist the payload, retry
-  with backoff, mark the peer degraded).
+- **Several API replicas** would each deliver the same outbox entry (every receiver is
+  idempotent for messages, rooms and reactions, so nothing breaks, but a per-entry claim
+  belongs in front of that step before the API is scaled out).
 - **Media proxying**: attachments are loaded directly from the origin CDN, which exposes the
   reader's IP to that instance. A caching proxy on the reader's instance would fix that.
 - **Key gating** on the S2S key endpoints is by signature only (any allowed instance can
@@ -343,14 +369,16 @@ both directions. `GET /federation/peers` (session auth) lists instances seen so 
 ## Files
 
 - `equinox/internal/federation/` - the engine: identity parsing, signing key, discovery,
-  signed client, request-verifying middleware, mapping repository, outbound relays,
-  inbound handlers.
+  signed client, request-verifying middleware, mapping repository, outbound relays
+  (`outbox.go`: the durable per-peer queue), inbound handlers; `spaces_peers.go` holds
+  the instance list of a space and the paged member sync.
 - `equinox/internal/modules/{rooms,messages,devices,users,relationships,spaces,voice}` -
   small `Federator`/`KeyRouter` hook interfaces the engine implements; nil when federation
   is off. `spaces/federation.go` holds the mirror side (building and updating a mirror),
   `federation/spaces.go` the wire types and both directions of the space protocol.
 - `equinox/migrations/021_federation.cql` - shadow-user columns and mapping tables;
-  `035_federated_spaces.cql` - space mappings and the origin's peer list.
+  `035_federated_spaces.cql` - space mappings and the space peer list;
+  `036_federation_outbox.cql` - the relay outbox and the peer failure marks.
 - `web.strafe.chat/src/stores/{instance,federationIds}.ts`, `src/lib/e2ee/constants.ts` -
   client-side identity.
 - `deploy/` - production compose, Caddyfile, env template, runbook.
