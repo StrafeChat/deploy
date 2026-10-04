@@ -55,6 +55,7 @@ and you're in.
 | --- | --- | --- |
 | Identity | `DOMAIN`, `ACME_EMAIL` | The domain is also your federation name. |
 | Registration | `INVITE_ONLY`, `INSTANCE_ADMINS`, `CAPTCHA`, `CAPTCHA_PROVIDER` + that provider's keys | See below. |
+| Direct messages | `PM_POLICY` | `shared` (default): only friends and people who share a space can start a DM with each other, which is what keeps strangers from spamming a public instance. `open`: anyone can message anyone. Blocks apply either way. |
 | Email | `SMTP_HOST`, `SMTP_PORT`, `SMTP_TLS`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`, `EMAIL_VERIFICATION`, `MAIL_HOSTNAME`, `MAIL_DKIM_SELECTOR` | Off until `SMTP_HOST` is set; bundled send-only relay or your own server. See below. |
 | Uploads | `ATTACHMENT_MAX_MB`, `STORAGE_BACKEND`, `S3_*`, `NEBULA_CORS_ORIGINS`, `SEED_EMOJI` | Local volume or any S3-compatible bucket; the CDN also serves the emoji sets so the client needs no third-party CDN. |
 | Voice/video | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_NODE_IP` | Bundled LiveKit; see below. |
