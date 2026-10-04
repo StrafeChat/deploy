@@ -10,7 +10,8 @@ WebSocket gateway, sharing ScyllaDB + Redis), **nebula** (a small object store s
 avatars, emoji and attachments over HTTP), and the **web** client (SolidJS). Before this
 work the system was strictly single-instance:
 
-- **Identity** was a local snowflake id plus `username#discriminator`, with lookup tables
+- **Identity** was a local snowflake id plus a username (then paired with a #0001
+  discriminator; usernames have since become unique on their own), with lookup tables
   keyed by email and username. Nothing carried a "which server" notion.
 - **Rooms** (PMs, group PMs, space channels) stored participants as local user ids;
   messages lived in one `messages` partition per room with local snowflake ids.
@@ -54,7 +55,7 @@ Peers cache this for an hour and re-fetch on a signature failure (key rotation).
 
 | Thing | Local form | Federated form |
 | --- | --- | --- |
-| User, as typed by people | `alice#0001` | `alice#0001@chat.example.com` |
+| User, as typed by people | `alice` | `alice@chat.example.com` |
 | User, for the crypto engine and S2S payloads (FID) | `@<id>:<local domain>` | `@<origin id>:<home domain>` |
 | Room, for the crypto engine | `!<id>:<local domain>` | `!<origin room id>:<origin domain>` |
 
@@ -106,7 +107,7 @@ URL path) means a reverse proxy may mount the API under any prefix.
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /users/lookup?username&discriminator` | resolve a handle to a profile |
+| `GET /users/lookup?username` | resolve a handle to a profile |
 | `GET /users/:id` | profile by origin id |
 | `POST /users/update` | a user's profile changed |
 | `POST /users/presence` | how a user now appears to others, for the receiver's users who are their friends or share a space with them |
@@ -155,7 +156,7 @@ so they are sent once, from memory, and dropped if the peer is away.
 
 ### Friends across instances
 
-A friend request to `alice#0001@chat.example.com` resolves the handle through
+A friend request to `alice@chat.example.com` resolves the handle through
 `GET /users/lookup` on her instance (creating or refreshing her shadow row), stores the
 request locally against the shadow id, and relays it with `POST /relationships`
 (`action: request`). Her instance stores it the other way round - from *your* shadow row
