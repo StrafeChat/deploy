@@ -157,6 +157,9 @@ services:
       INVITE_ONLY: ${INVITE_ONLY:-false}
       # Who may start a direct message: shared (friends + people in a common space) or open.
       PM_POLICY: ${PM_POLICY:-shared}
+      # Refuse throwaway-mail addresses at registration (bundled list), plus your own domains.
+      EMAIL_BLOCK_DISPOSABLE: ${EMAIL_BLOCK_DISPOSABLE:-true}
+      EMAIL_BLOCKED_DOMAINS: ${EMAIL_BLOCKED_DOMAINS:-}
       # Accounts that may mint instance invites regardless of the database. The first
       # account registered becomes an administrator on its own; this is the way back in
       # if that account is lost.
