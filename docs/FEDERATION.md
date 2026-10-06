@@ -69,8 +69,10 @@ A remote user gets a local **shadow row** in `users` with `home_domain` and `rem
 set and no email/password. It is never in the email or username lookup tables and can't
 log in, but every existing code path that resolves a user id (participants, mentions,
 message senders, key-exchange reachability checks) works unchanged. `users_by_remote`
-maps `(home_domain, remote_id)` back to the shadow. Profiles are refreshed whenever the
-home instance relays a change (`POST /federation/v1/users/update`).
+maps `(home_domain, remote_id)` back to the shadow. Profiles (username, display name,
+avatar, banner, bio, about me, pronouns, bot flag) are refreshed whenever the home instance
+relays a change (`POST /federation/v1/users/update`). Profile badges stay instance-local:
+they are something an instance's administrators grant, not something a peer asserts.
 
 ### Mirrored rooms
 
@@ -251,10 +253,14 @@ a PM - a channel's messages keep the origin's ids everywhere.
   so nothing arrives twice). The origin's refusal is passed through to the member with
   its status and reason. Typing goes to the origin the same way and is passed on.
 - **Reads come from the origin.** A mirror only holds what was relayed since one of its
-  users joined, so a channel's history (`GET /rooms/:id/messages`) is read from the
-  origin, as the asking member may see it, and kept locally as it is read; if the origin
-  cannot be reached the local copy is served instead. The member list, roles and channel
-  structure are read locally - they are complete.
+  users joined, so a channel's history (`GET /rooms/:id/messages` with any of the
+  `before`, `after` and `around` cursors - paging, jump-to-message, reading downward out
+  of a jumped-to window) is read from the origin, as the asking member may see it, and
+  kept locally as it is read; if the origin cannot be reached the local copy is served
+  instead. Search works the same way: a channel or space-wide search on a mirror runs on
+  the origin (`POST /spaces/messages/search`, the member's channel permissions and the
+  E2EE skip applied there), so it covers history from before the mirror existed. The
+  member list, roles and channel structure are read locally - they are complete.
 - **Changes flow down.** Settings, icon/banner, role create/update/delete, member
   roles, channel create/update/delete and reorder, overrides, kicks, bans and the space's
   deletion are pushed by the origin to every mirror, which applies them and emits the
@@ -355,9 +361,27 @@ REST poll and the gateway push agree on who an Olm session belongs to.
 Attachment URLs are absolute (the origin instance's nebula), so they render on any
 instance. Encrypted attachments are fetched with `fetch()` and decrypted client-side, which
 needs the CDN to allow cross-origin reads: nebula's `CORS_ORIGINS` must be empty (any
-origin) or include the other instances. Custom emoji are referenced by id and resolved
-through the origin's `/emojis/:id` only for local users; a remote emoji still renders
-because its image URL is absolute, but the by-id lookup is local (falls back to `:name:`).
+origin) or include the other instances.
+
+Custom emoji are referenced by id (`<:name:id>` in text, `custom:<id>` as a reaction) and
+the client resolves an id it does not know through `GET /emojis/:id` on its own instance.
+So that this works for an emoji from a space the reader's instance has never mirrored, every
+message, edit and reaction that crosses instances carries `emojis: [{id, name, url,
+animated}]` describing the custom emoji it uses, and the receiving instance records the ones
+it does not know (under "no space of ours"); an emoji it already has - its own or a mirrored
+space's - is never overwritten by a peer's description.
+
+### Mentions in text
+
+Message text is written with instance-local ids (`<@123>`), which mean nothing elsewhere:
+the same person has a different shadow id on every instance. Text is translated at the
+boundary - mentions go out as `<@@id:domain>` (the person's federated id) and are rewritten
+to the receiver's local id on the way in, fetching a shadow for anyone not yet known. This
+applies to every path text takes (relays, a mirror's writes to the origin and the origin's
+answers, history and search pages), so a mention typed on one instance highlights the right
+person on all of them. Role mentions already use the origin's role ids everywhere. In
+end-to-end-encrypted rooms the server never sees the text; there the declared `mentions`
+list (federated ids on the wire) is what crosses.
 
 ### Policy
 
@@ -382,6 +406,11 @@ when another instance builds or resyncs a mirror of a space hosted here.
 - **Key gating** on the S2S key endpoints is by signature only (any allowed instance can
   query/claim keys for your users), matching what Matrix does; a stricter "must share a
   room" check is possible with the mapping tables.
+- **Account migration** between instances (Mastodon's "move"), **moderating a single remote
+  account** instance-wide (today only a whole peer can be blocked), **forwarding a report**
+  to the reported user's home instance, and **per-space federation policy** (a space that
+  admits members from this instance only, or from a list of instances) are not built; they
+  are the next layer, see the project tracker.
 
 ## Files
 
