@@ -120,10 +120,11 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `POST /rooms/typing` | typing indicator |
 | `POST /rooms/messages`, `PATCH /rooms/messages`, `POST /rooms/messages/delete` | message lifecycle (including system messages) |
 | `POST /rooms/reactions`, `POST /rooms/reactions/delete` | a reaction added to / withdrawn from a message |
+| `POST /rooms/pins` | a user pinned or unpinned a message in a shared room |
 | `POST /rooms/voice/join`, `/leave`, `/self`, `/ring`, `/decline` | asked of the room's origin: a token for the call it hosts, and the caller's later actions |
 | `POST /rooms/voice/state`, `POST /rooms/voice/call` | pushed by the origin: a voice state changed or left, the call started / changed / ended |
 | `GET /spaces/invites/:code`, `POST /spaces/join`, `POST /spaces/leave`, `POST /spaces/invites` | asked of a space's origin: preview an invite, redeem it for one of the asking instance's users (the answer is the whole space), leave, mint an invite |
-| `POST /spaces/messages`, `PATCH /spaces/messages`, `POST /spaces/messages/delete`, `POST /spaces/reactions[/delete]`, `POST /spaces/messages/list`, `POST /spaces/messages/get` | asked of a space's origin by a mirror on behalf of a member: write into, react in and read a channel |
+| `POST /spaces/messages`, `PATCH /spaces/messages`, `POST /spaces/messages/delete`, `POST /spaces/reactions[/delete]`, `POST /spaces/pins[/list]`, `POST /spaces/messages/list`, `POST /spaces/messages/get` | asked of a space's origin by a mirror on behalf of a member: write into, react and pin in, and read a channel (history and its pin list) |
 | `POST /spaces/manage` | asked of a space's origin by a mirror on behalf of a member who may manage it: one of `space.patch`, `space.image`, `role.create/update/delete`, `member.roles/kick/ban/unban`, `bans.list`, `invites.list`, `invite.delete`, `audit.list`, `room.create/update/delete`, `rooms.reorder`, `room.move`, `override.put/delete`, `emoji.create/rename/delete`, `space.transfer`, `space.delete`, `bot.install`, `member.add`; answers with the result and the relays captured for the asker |
 | `POST /spaces/sync` | asked of a space's origin by a mirror: a fresh snapshot to reconcile against |
 | `POST /spaces/members/list` | asked of a space's origin by a mirror: the next page of members (the join and sync replies carry the first page and a cursor) |
