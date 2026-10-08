@@ -59,7 +59,7 @@ and you're in.
 | Email | `SMTP_HOST`, `SMTP_PORT`, `SMTP_TLS`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`, `EMAIL_VERIFICATION`, `MAIL_HOSTNAME`, `MAIL_DKIM_SELECTOR` | Off until `SMTP_HOST` is set; bundled send-only relay or your own server. See below. |
 | Uploads | `ATTACHMENT_MAX_MB`, `STORAGE_BACKEND`, `S3_*`, `NEBULA_CORS_ORIGINS`, `SEED_EMOJI` | Local volume or any S3-compatible bucket; the CDN also serves the emoji sets so the client needs no third-party CDN. |
 | Voice/video | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_NODE_IP` | Bundled LiveKit; see below. |
-| Federation | `FEDERATION_ALLOWLIST`, `FEDERATION_BLOCKLIST`, `FEDERATION_SIGNING_KEY` | Open by default. |
+| Federation | `FEDERATION_ALLOWLIST`, `FEDERATION_BLOCKLIST`, `FEDERATION_SIGNING_KEY`, `DISCOVER_FEDERATION` | Open by default. `DISCOVER_FEDERATION` (on by default) also puts the spaces your peers list on your Discover page, and offers yours to them; a space's managers can opt out of being shared from space settings → Discover. |
 | Tuning | `SNOWFLAKE_NODE_ID`, `LOG_LEVEL`, `SCYLLA_SMP`, `SCYLLA_MEMORY` | |
 
 ### Invite-only registration
@@ -122,9 +122,19 @@ space's managers apply from **Space settings → Discover** and a bot's owner fr
 **Settings → Developers**, each with a tagline and a few tags, and the application lands
 on the dashboard's **Discover** tab, where an administrator approves or declines it (a
 note goes back to the applicant). A listed space can be joined from the page without an
-invite; a listed bot's card opens its install page. Listings are per instance: a space
-is listed where it is hosted, and an administrator can remove one at any time. Approvals,
-refusals and removals land in the instance audit log.
+invite; a listed bot's card opens its install page. A space is listed where it is hosted,
+and an administrator can remove one at any time. Approvals, refusals and removals land in
+the instance audit log.
+
+The page also shows spaces listed on the instances you federate with, so a small instance
+offers its users the whole network rather than its own handful of spaces. Each instance
+serves what it lists at a signed endpoint and asks its peers for theirs every 15 minutes,
+so a peer being down only means a slightly stale card. Joining one of those cards joins
+the space on the instance that hosts it, the same as any federated space. Sharing is per
+listing and on by default: a space's managers can untick **Show on other instances too**
+under Space settings → Discover to be found on this instance only, and an operator can turn
+the whole exchange off with `DISCOVER_FEDERATION=false`. Bots are never shared, since
+installing one is an OAuth flow on the instance the application lives on.
 
 ### Registration captcha
 

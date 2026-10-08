@@ -201,6 +201,10 @@ services:
       FEDERATION_SIGNING_KEY: ${FEDERATION_SIGNING_KEY:-}
       FEDERATION_ALLOWLIST: ${FEDERATION_ALLOWLIST:-}
       FEDERATION_BLOCKLIST: ${FEDERATION_BLOCKLIST:-}
+      # Show spaces listed by the instances you federate with on your Discover page,
+      # and let them show yours. Each space's managers can still opt out of being
+      # shared; set this to false to keep Discover to this instance only.
+      DISCOVER_FEDERATION: ${DISCOVER_FEDERATION:-true}
       # Voice/video: browsers connect through Caddy, the API talks to LiveKit directly.
       # Unset (VOICE=false) the three are empty and every call control disappears.
       LIVEKIT_URL: ${LIVEKIT_URL_OVERRIDE:-wss://${DOMAIN}/livekit}

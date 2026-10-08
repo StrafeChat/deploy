@@ -130,6 +130,8 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `POST /spaces/members/list` | asked of a space's origin by a mirror: the next page of members (the join and sync replies carry the first page and a cursor) |
 | `POST /spaces/update`, `/spaces/members`, `/spaces/roles`, `/spaces/rooms`, `/spaces/emoji`, `/spaces/peers`, `/spaces/delete` | pushed by the origin to every instance mirroring the space: settings, membership and roles, roles, channels and overrides (and their order), custom emoji, which instances are in the space, deletion; threads travel as rooms of type 6 with their `thread` state, but thread membership is not mirrored, so a private thread is only visible on the origin and threads are created and edited there |
 | `POST /keys/query`, `POST /keys/claim`, `POST /to_device` | E2EE key exchange for the receiver's users |
+| `GET /discover` | the spaces this instance lists publicly and shares, for the asker's Discover page |
+| `POST /spaces/join_listed` | asked of a space's origin: add one of the asking instance's users to a space it lists publicly, no invite (the answer is the whole space) |
 
 Authorization rules on the receiving side: an instance may only announce rooms it created,
 relay messages/edits/deletes/typing for its **own** users, touch rooms one of its users
@@ -383,6 +385,29 @@ answers, history and search pages), so a mention typed on one instance highlight
 person on all of them. Role mentions already use the origin's role ids everywhere. In
 end-to-end-encrypted rooms the server never sees the text; there the declared `mentions`
 list (federated ids on the wire) is what crosses.
+
+### Discover across instances
+
+Every instance serves the spaces it lists at `GET /discover` and asks each peer for theirs
+on a 15-minute timer, keeping the last answer until the next round. The directory is pulled,
+not pushed: nothing has to be relayed, retried or deleted in a fan-out, a peer that is down
+only means a slightly stale card, and the instance that hosts a space stays the only
+authority on whether it is listed at all.
+
+A peer's cards sit on the same Discover page as the local ones, each badged with the
+instance that hosts it, and the page can be narrowed to this instance. Joining one goes to
+the origin (`POST /spaces/join_listed`), which checks for itself that the space really is
+listed and shared before adding the member - a peer holding a card from before the managers
+changed their mind gets a plain "not listed", not a way in. From there it is an ordinary
+mirror, exactly as an invite join would have built.
+
+Sharing is per listing and on by default (`federate_opt_out` on the listing); operators can
+turn the whole exchange off with `DISCOVER_FEDERATION=false`, which also makes this instance
+answer `GET /discover` with nothing and refuse every listed join. Only approved space
+listings are shared: a pending or declined application never leaves the instance, and bots
+are never shared because installing one is an OAuth flow on the instance the application
+lives on. What a peer stores is capped at 100 cards per instance, and every text field is
+clamped on arrival.
 
 ### Policy
 
