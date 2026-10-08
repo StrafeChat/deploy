@@ -105,6 +105,15 @@ ban the account or take the space down, and every action lands in the instance a
 The server never copies message text into a report: in an end-to-end encrypted room it
 cannot read it, and the reporter is told to paste it if they want it seen.
 
+Every instance has an **official account** (shown with an OFFICIAL tag, username `system`),
+provisioned automatically on first start. It delivers official messages to a user as a
+direct message: the outcome of a report to the person who filed it, a note when a ban is
+lifted, and any free-text notice an administrator sends from the dashboard (user drawer →
+**Send a notice** - use it for warnings or announcements). The official account never logs
+in and its direct messages are one-way - a recipient cannot reply. Its notices are plain
+text (the account has no encryption keys), so unlike an ordinary 1:1 DM they are not
+end-to-end encrypted; send nothing through it you would not want the server to hold.
+
 ### Discover
 
 Every instance has a **Discover** page (the compass below "Add a space" in the sidebar): a
