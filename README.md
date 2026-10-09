@@ -147,7 +147,9 @@ for Windows, macOS and Linux, and its sign-in page asks which instance to use (y
 a hosted captcha (Turnstile, Friendly Captcha) must allow the host `tauri.localhost` in its
 dashboard or the app's registration form cannot show it (the default ALTCHA is unaffected),
 and passkeys cannot be used as a second factor from the app - authenticator apps and
-recovery codes work.
+recovery codes work. Voice and video are not available in the Linux app (the WebKitGTK
+that distributions and the AppImage ship has no WebRTC); Linux users take calls in a
+browser, Windows and macOS apps are unaffected.
 
 ### Registration captcha
 
