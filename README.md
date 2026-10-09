@@ -136,6 +136,19 @@ under Space settings → Discover to be found on this instance only, and an oper
 the whole exchange off with `DISCOVER_FEDERATION=false`. Bots are never shared, since
 installing one is an OAuth flow on the instance the application lives on.
 
+### Desktop app
+
+Your users do not need anything from you to use the desktop app: it is one build for every
+instance, published at
+[github.com/StrafeChat/web.strafe.chat/releases](https://github.com/StrafeChat/web.strafe.chat/releases)
+for Windows, macOS and Linux, and its sign-in page asks which instance to use (your
+`DOMAIN`). The API, gateway and CDN admit the app's own request origin alongside
+`CORS_ORIGINS` / `STARGATE_ALLOWED_ORIGINS`, so no list needs editing. Two things to know:
+a hosted captcha (Turnstile, Friendly Captcha) must allow the host `tauri.localhost` in its
+dashboard or the app's registration form cannot show it (the default ALTCHA is unaffected),
+and passkeys cannot be used as a second factor from the app - authenticator apps and
+recovery codes work.
+
 ### Registration captcha
 
 Any instance open to the public should run one (`CAPTCHA=true`). Four providers:
