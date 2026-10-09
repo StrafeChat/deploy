@@ -140,7 +140,7 @@ installing one is an OAuth flow on the instance the application lives on.
 
 Your users do not need anything from you to use the desktop app: it is one build for every
 instance, published at
-[github.com/StrafeChat/web.strafe.chat/releases](https://github.com/StrafeChat/web.strafe.chat/releases)
+[github.com/StrafeChat/desktop/releases](https://github.com/StrafeChat/desktop/releases)
 for Windows, macOS and Linux, and its sign-in page asks which instance to use (your
 `DOMAIN`). The API, gateway and CDN admit the app's own request origin alongside
 `CORS_ORIGINS` / `STARGATE_ALLOWED_ORIGINS`, so no list needs editing. Two things to know:
