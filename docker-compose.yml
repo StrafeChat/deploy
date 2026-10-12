@@ -211,6 +211,14 @@ services:
       LIVEKIT_INTERNAL_URL: http://livekit:7880
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      # Push notifications to signed-in phones (docs/PUSH.md). Standard Web Push, encrypted
+      # to each device; no Google/Apple credentials. The VAPID key is generated and stored
+      # in the database when PUSH_VAPID_PRIVATE_KEY is empty.
+      PUSH_ENABLED: ${PUSH_ENABLED:-true}
+      PUSH_VAPID_PRIVATE_KEY: ${PUSH_VAPID_PRIVATE_KEY:-}
+      PUSH_VAPID_SUBJECT: ${PUSH_VAPID_SUBJECT:-https://${DOMAIN}}
+      PUSH_ALLOWED_HOSTS: ${PUSH_ALLOWED_HOSTS:-}
+      PUSH_WORKERS: ${PUSH_WORKERS:-4}
     volumes:
       - federation-data:/data
     # The API is the one service that can reach the mail relay (the `mail` network is

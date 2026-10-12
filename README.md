@@ -288,6 +288,16 @@ the others over the same Olm channel PMs use, and rotated whenever someone joins
 so your LiveKit forwards packets it cannot read. A browser that cannot do it is refused the
 call rather than connected in the clear. See [`docs/VOICE.md`](docs/VOICE.md).
 
+### Push notifications
+
+Phones signed in to your instance are notified about messages, mentions and calls while
+the app is closed. There is nothing to set up: no Google or Apple account. The API sends
+standard Web Push, encrypted to each device, to the address that device registered (the
+app's push gateway or a UnifiedPush server), so it needs outbound HTTPS and nothing else.
+Its identity key is generated on first start. The optional `PUSH_*` settings are in
+`.env.example`, and [`docs/PUSH.md`](docs/PUSH.md) covers the privacy model, the protocol and
+troubleshooting.
+
 ## Building from source
 
 `docker compose up --build` builds each service from its GitHub repository, pinned in
