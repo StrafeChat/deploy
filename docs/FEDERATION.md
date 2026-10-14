@@ -125,7 +125,7 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `POST /rooms/voice/state`, `POST /rooms/voice/call` | pushed by the origin: a voice state changed or left, the call started / changed / ended |
 | `GET /spaces/invites/:code`, `POST /spaces/join`, `POST /spaces/leave`, `POST /spaces/invites` | asked of a space's origin: preview an invite, redeem it for one of the asking instance's users (the answer is the whole space), leave, mint an invite |
 | `POST /spaces/messages`, `PATCH /spaces/messages`, `POST /spaces/messages/delete`, `POST /spaces/reactions[/delete]`, `POST /spaces/pins[/list]`, `POST /spaces/messages/list`, `POST /spaces/messages/get` | asked of a space's origin by a mirror on behalf of a member: write into, react and pin in, and read a channel (history and its pin list) |
-| `POST /spaces/manage` | asked of a space's origin by a mirror on behalf of a member who may manage it: one of `space.patch`, `space.image`, `role.create/update/delete`, `member.roles/kick/ban/unban`, `bans.list`, `invites.list`, `invite.delete`, `audit.list`, `room.create/update/delete`, `rooms.reorder`, `room.move`, `override.put/delete`, `emoji.create/rename/delete`, `space.transfer`, `space.delete`, `bot.install`, `member.add`; answers with the result and the relays captured for the asker |
+| `POST /spaces/manage` | asked of a space's origin by a mirror on behalf of a member who may manage it: one of `space.patch`, `space.image`, `role.create/update/delete`, `member.roles/kick/ban/unban`, `bans.list`, `invites.list`, `invite.delete`, `audit.list`, `room.create/update/delete`, `rooms.reorder`, `room.move`, `override.put/delete`, `emoji.create/rename/delete`, `space.transfer`, `space.delete`, `bot.install`, `member.add`, `member.profile`; answers with the result and the relays captured for the asker |
 | `POST /spaces/sync` | asked of a space's origin by a mirror: a fresh snapshot to reconcile against |
 | `POST /spaces/members/list` | asked of a space's origin by a mirror: the next page of members (the join and sync replies carry the first page and a cursor) |
 | `POST /spaces/update`, `/spaces/members`, `/spaces/roles`, `/spaces/rooms`, `/spaces/emoji`, `/spaces/peers`, `/spaces/delete` | pushed by the origin to every instance mirroring the space: settings, membership and roles, roles, channels and overrides (and their order), custom emoji, which instances are in the space, deletion; threads travel as rooms of type 6 with their `thread` state, but thread membership is not mirrored, so a private thread is only visible on the origin and threads are created and edited there |
@@ -282,6 +282,23 @@ a PM - a channel's messages keep the origin's ids everywhere.
   its state is what every other mirror has and the REST reply is served from it. Lists
   the mirror does not hold (bans, invites, the audit log) are read the same way, with
   users mapped to local ids and invite codes returned as `code@origin`.
+- **Space profiles.** A member's per-space nickname, avatar, banner, About Me, bio and
+  pronouns live on their member row at the origin and travel with it: the snapshot, the
+  member pages and every member relay carry all six as full state (a missing field means
+  no override), and a mirror clamps what it applies to the origin's limits (nickname 32
+  characters with control and bidirectional-override characters removed, About Me and bio
+  190, pronouns 40, images http(s) only). A member on a mirror changes their own space
+  profile, and a moderator with Manage Nicknames changes someone's nickname or clears
+  their space profile, through `member.profile` (`{user, nick?, avatar?, banner?,
+  about_me?, bio?, pronouns?}`: a missing key is unchanged, `""` clears). The origin runs
+  the same checks as for a local member - Change Nickname for your own nickname, Manage
+  Nicknames and a higher role for anyone else's; a member's other profile fields can be set
+  only by that member, and a moderator may only clear them - writes the audit entry for a
+  moderator's change, and relays the member. A space profile's images stay on the member's
+  home instance's CDN; an instance only ever deletes images under its own `spaces/members/`
+  keys. An origin that predates
+  space profiles answers `member.profile` with "unknown action", and clients say the
+  space's instance does not support them yet.
 - **Bots.** A bot is installed into a federated space by a member whose account lives on
   the bot's instance: they approve the bot's consent screen there (the mirrored space is
   listed as a target, marked with where it is hosted), and that instance asks the origin

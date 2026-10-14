@@ -269,6 +269,9 @@ Compact JSON, at most 2047 bytes. All ids are strings.
 as `a` and a group's `rn`. `call_end` carries `rid` and `rt`. `test` carries nothing more.
 The preview has mentions written out as `@name`, room links as `#name` (only rooms the
 recipient can see), custom emoji as `:name:`, whitespace collapsed, at most 300 characters.
+In a space room or thread, `a.n` and `a.av` and the `@name` mentions in `b` are the member's
+space nickname and space avatar where they have set one; PMs, group PMs and calls always
+show the global profile.
 
 ### Who is notified
 
