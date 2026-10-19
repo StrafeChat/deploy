@@ -114,9 +114,9 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `POST /users/update` | a user's profile changed |
 | `POST /users/presence` | how a user now appears to others, for the receiver's users who are their friends or share a space with them |
 | `POST /relationships` | a friend request, acceptance or teardown from the sender's user to one of the receiver's |
-| `POST /rooms` | the origin announces a new room and its participants |
-| `PUT /rooms/participants` | full member set after add/remove |
-| `PATCH /rooms` | name / E2EE setting changed |
+| `POST /rooms` | the origin announces a new room and its participants. The receiver admits each of its own users through the same gate a local account passes to start a conversation (never across a block; under `PM_POLICY=shared` only friends or people sharing a space) and answers `403` when none of them may be reached |
+| `PUT /rooms/participants` | full member set after add/remove; accepted from the room's origin only (only a group's creator may change membership, and the creator lives on the origin). Newly added users of the receiver pass the same gate as above |
+| `PATCH /rooms` | name / E2EE setting changed; accepted from the origin only. `e2ee_enabled` may change on a group only, never on a 1:1 PM, which is encrypted for life |
 | `POST /rooms/typing` | typing indicator |
 | `POST /rooms/messages`, `PATCH /rooms/messages`, `POST /rooms/messages/delete` | message lifecycle (including system messages) |
 | `POST /rooms/reactions`, `POST /rooms/reactions/delete` | a reaction added to / withdrawn from a message |
@@ -129,7 +129,7 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `POST /spaces/sync` | asked of a space's origin by a mirror: a fresh snapshot to reconcile against |
 | `POST /spaces/members/list` | asked of a space's origin by a mirror: the next page of members (the join and sync replies carry the first page and a cursor) |
 | `POST /spaces/update`, `/spaces/members`, `/spaces/roles`, `/spaces/rooms`, `/spaces/emoji`, `/spaces/peers`, `/spaces/delete` | pushed by the origin to every instance mirroring the space: settings, membership and roles, roles, channels and overrides (and their order), custom emoji, which instances are in the space, deletion; threads travel as rooms of type 6 with their `thread` state, but thread membership is not mirrored, so a private thread is only visible on the origin and threads are created and edited there |
-| `POST /keys/query`, `POST /keys/claim`, `POST /to_device` | E2EE key exchange for the receiver's users |
+| `POST /keys/query`, `POST /keys/claim`, `POST /to_device` | E2EE key exchange for the receiver's users. The body names the requesting user (`requester`, a FID on the signing instance, for the key endpoints; `sender` for to-device); the receiver serves each of its users only when the two may exchange keys - a shared room, or friends who do not block each other, the gate its own clients go through - and refuses a request without a requester. Per-peer rate limits apply (600 queries and 300 claims a minute) |
 | `GET /discover` | the spaces this instance lists publicly and shares, for the asker's Discover page |
 | `POST /spaces/join_listed` | asked of a space's origin: add one of the asking instance's users to a space it lists publicly, no invite (the answer is the whole space) |
 
@@ -359,7 +359,13 @@ The client builds the crypto engine's ids from the identity registry
 `origin_id` fields every participant now carries and the `federation` field on rooms.
 On the server, `/devices/keys/query`, `/keys/claim` and `/send_to_device` split requests
 by the domain in each `@id:domain` key: local users are answered locally, the rest is
-forwarded (signed) to their home instance, which serves only its own users. Inbound
+forwarded (signed) to their home instance, which serves only its own users. The forwarded
+request carries the asking user (`requester`), and the home instance answers for each of
+its users only when the two share a room (or are friends, neither blocking the other),
+exactly as it would for one of its own clients - a peer cannot enumerate device lists or
+drain one-time-key pools of users its people have nothing to do with, and an instance
+running an older version, which sends no `requester`, is refused with `403`. Inbound
+to-device traffic is gated the same way, by the sender it names. Inbound
 to-device traffic is stored for the local recipient with the sender's shadow id and pushed
 with `sender_fid` so the recipient's engine keys the Olm session by the right name.
 
