@@ -59,6 +59,7 @@ and you're in.
 | Email | `SMTP_HOST`, `SMTP_PORT`, `SMTP_TLS`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `MAIL_FROM`, `EMAIL_VERIFICATION`, `MAIL_HOSTNAME`, `MAIL_DKIM_SELECTOR` | Off until `SMTP_HOST` is set; bundled send-only relay or your own server. See below. |
 | Uploads | `ATTACHMENT_MAX_MB`, `STORAGE_BACKEND`, `S3_*`, `NEBULA_CORS_ORIGINS`, `SEED_EMOJI` | Local volume or any S3-compatible bucket; the CDN also serves the emoji sets so the client needs no third-party CDN. |
 | Voice/video | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_NODE_IP` | Bundled LiveKit; see below. |
+| GIF picker | `STRAFE_GIPHY_API_KEY`, `STRAFE_HEYPSTER_API_KEY` | Optional; empty hides the GIF tab behind a "not configured" note. Only the API sees them - it runs the searches itself and never sends a key to browsers. Older versions published them in `https://<your domain>/config.js`, so if you set one before, revoke it with the provider and use a new one. |
 | Federation | `FEDERATION_ALLOWLIST`, `FEDERATION_BLOCKLIST`, `FEDERATION_SIGNING_KEY`, `DISCOVER_FEDERATION` | Open by default. `DISCOVER_FEDERATION` (on by default) also puts the spaces your peers list on your Discover page, and offers yours to them; a space's managers can opt out of being shared from space settings → Discover. |
 | Tuning | `SNOWFLAKE_NODE_ID`, `LOG_LEVEL`, `SCYLLA_SMP`, `SCYLLA_MEMORY` | |
 

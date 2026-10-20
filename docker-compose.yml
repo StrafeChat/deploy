@@ -68,10 +68,8 @@ services:
       STRAFE_API_URL: https://${DOMAIN}/api
       STRAFE_STARGATE_URL: wss://${DOMAIN}/gateway/events
       STRAFE_CDN_URL: https://${DOMAIN}/cdn
-      # Optional GIF-picker keys, passed through from the deploy .env (blank => GIF tab shows
-      # a "not configured" note). See web.strafe.chat entrypoint.sh / runtimeConfig.ts.
-      STRAFE_GIPHY_API_KEY: ${STRAFE_GIPHY_API_KEY:-}
-      STRAFE_HEYPSTER_API_KEY: ${STRAFE_HEYPSTER_API_KEY:-}
+      # No GIF keys here: everything in this environment ends up in the public config.js.
+      # They go to equinox-api, which searches GIPHY/Heypster on the browser's behalf.
 
   scylla:
     image: scylladb/scylla:5.4
@@ -219,6 +217,11 @@ services:
       PUSH_VAPID_SUBJECT: ${PUSH_VAPID_SUBJECT:-https://${DOMAIN}}
       PUSH_ALLOWED_HOSTS: ${PUSH_ALLOWED_HOSTS:-}
       PUSH_WORKERS: ${PUSH_WORKERS:-4}
+      # GIF picker. The API calls GIPHY/Heypster itself (GET /gifs/*), so the keys stay on
+      # this host and searches come from the instance rather than each user's browser. Same
+      # .env names as when the web container took them, so existing instances keep working.
+      GIPHY_API_KEY: ${STRAFE_GIPHY_API_KEY:-}
+      HEYPSTER_API_KEY: ${STRAFE_HEYPSTER_API_KEY:-}
     volumes:
       - federation-data:/data
     # The API is the one service that can reach the mail relay (the `mail` network is
@@ -239,6 +242,9 @@ services:
         condition: service_completed_successfully
     environment:
       <<: *equinox-env
+      # The gateway never calls a GIF provider; keep those keys in the API alone.
+      GIPHY_API_KEY: ""
+      HEYPSTER_API_KEY: ""
     volumes:
       - federation-data:/data
 
