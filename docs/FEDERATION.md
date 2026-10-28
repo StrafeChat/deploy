@@ -125,7 +125,7 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `POST /rooms/voice/state`, `POST /rooms/voice/call` | pushed by the origin: a voice state changed or left, the call started / changed / ended |
 | `GET /spaces/invites/:code`, `POST /spaces/join`, `POST /spaces/leave`, `POST /spaces/invites` | asked of a space's origin: preview an invite, redeem it for one of the asking instance's users (the answer is the whole space), leave, mint an invite |
 | `POST /spaces/messages`, `PATCH /spaces/messages`, `POST /spaces/messages/delete`, `POST /spaces/reactions[/delete]`, `POST /spaces/pins[/list]`, `POST /spaces/messages/list`, `POST /spaces/messages/get` | asked of a space's origin by a mirror on behalf of a member: write into, react and pin in, and read a channel (history and its pin list) |
-| `POST /spaces/manage` | asked of a space's origin by a mirror on behalf of a member who may manage it: one of `space.patch`, `space.image`, `role.create/update/delete`, `member.roles/kick/ban/unban`, `bans.list`, `invites.list`, `invite.delete`, `audit.list`, `room.create/update/delete`, `rooms.reorder`, `room.move`, `override.put/delete`, `emoji.create/rename/delete`, `space.transfer`, `space.delete`, `bot.install`, `member.add`, `member.profile`; answers with the result and the relays captured for the asker |
+| `POST /spaces/manage` | asked of a space's origin by a mirror on behalf of a member who may manage it: one of `space.patch`, `space.image`, `role.create/update/delete`, `role.positions`, `member.roles/role/kick/ban/unban`, `bans.list`, `invites.list`, `invite.delete`, `audit.list`, `room.create/update/delete`, `rooms.reorder`, `room.move`, `override.put/delete`, `emoji.create/rename/delete`, `space.transfer`, `space.delete`, `bot.install`, `member.add`, `member.profile`; answers with the result and the relays captured for the asker |
 | `POST /spaces/sync` | asked of a space's origin by a mirror: a fresh snapshot to reconcile against |
 | `POST /spaces/members/list` | asked of a space's origin by a mirror: the next page of members (the join and sync replies carry the first page and a cursor) |
 | `POST /spaces/update`, `/spaces/members`, `/spaces/roles`, `/spaces/rooms`, `/spaces/emoji`, `/spaces/peers`, `/spaces/delete` | pushed by the origin to every instance mirroring the space: settings, membership and roles, roles, channels and overrides (and their order), custom emoji, which instances are in the space, deletion; threads travel as rooms of type 6 with their `thread` state, but thread membership is not mirrored, so a private thread is only visible on the origin and threads are created and edited there |
@@ -264,7 +264,7 @@ a PM - a channel's messages keep the origin's ids everywhere.
   the origin (`POST /spaces/messages/search`, the member's channel permissions and the
   E2EE skip applied there), so it covers history from before the mirror existed. The
   member list, roles and channel structure are read locally - they are complete.
-- **Changes flow down.** Settings, icon/banner, role create/update/delete, member
+- **Changes flow down.** Settings, icon/banner, role create/update/delete and order, member
   roles, channel create/update/delete and reorder, overrides, kicks, bans and the space's
   deletion are pushed by the origin to every mirror, which applies them and emits the
   same gateway events its own clients would see for a local change. A kicked, banned or
@@ -282,6 +282,49 @@ a PM - a channel's messages keep the origin's ids everywhere.
   its state is what every other mirror has and the REST reply is served from it. Lists
   the mirror does not hold (bans, invites, the audit log) are read the same way, with
   users mapped to local ids and invite codes returned as `code@origin`.
+- **Role order.** A custom role's position is its rank, as on Discord, and the origin keeps
+  positions unique and at least 1 (@everyone is 0). A new role goes in at position 1, just
+  above @everyone (a bot's managed role on install too), and the roles above it that would
+  collide move up one. One role moved with `role.update {position}` (the single-role REST
+  route) swaps: it takes that slot, and the role holding it takes the moved role's old
+  position; a free position is written as asked. That keeps the clients that reorder with
+  one such request per role, reusing the positions the roles already hold, ending in the
+  order they meant, whatever order the requests arrive in. (While a space still has two
+  roles at one position, from before positions were kept unique, a move inserts and pushes
+  up instead, as `role.positions` does.) A mirror moves several roles at once with
+  `role.positions` (`{positions: [{role, position}]}`, 1 to 250 entries, Discord's Modify
+  Guild Role Positions): each listed role takes the slot it asks for and the roles above it
+  that would collide move up one. The origin runs the whole list as one request. Unless the
+  asking member is the owner, every listed role and every requested position must be below
+  their highest role; if any is not, nothing is written. The answer is every role of the
+  space, in the wire form `/spaces/roles` carries. Each role that moved, the ones pushed up
+  included, is relayed in the order the origin wrote them, which is how every mirror learns
+  the new order. The mirror refuses a list naming @everyone, or a role it does not have,
+  before asking, with the answer the origin's own REST API gives. An origin that predates
+  `role.positions` answers "unknown action". The mirror then sends one
+  `role.update {position}` per move, lowest requested position first. Such an origin
+  writes each position as given, so the lists clients send (the moved roles' own
+  positions, reassigned among them) end in the requested order once the last one is in.
+  They are separate writes, though: if one is refused part-way, the moves before it stay
+  applied.
+- **Member roles.** Whether a member's role can be given or taken away depends on the
+  role alone, as on Discord. A role below the actor's highest (for the owner, any role)
+  can be given to anyone, or taken from anyone: the space owner and members who outrank
+  the actor included. Roles at or above the actor's own that the member holds are kept as
+  they are, and a bot's managed role is never given to anyone else or taken from its bot.
+  Kicking, banning, renaming a member and resetting their space profile still need the
+  member to rank below the actor. A mirror sends the single-role routes
+  (`PUT`/`DELETE /spaces/:id/members/:userId/roles/:roleId`) as `member.role`
+  (`{user, role, add}`: the member's FID, the role's id, `true` to give it and `false` to
+  take it away; `add` is required). The origin applies it with the routes' own rules, as one
+  set operation on the member's roles, so two changes racing each other both land, where a
+  whole list read on the mirror and written back could undo one. A member who already holds
+  the role (or, removing, does not) is success with nothing written or relayed. Otherwise
+  the member relay is in the reply. An origin that predates `member.role` answers "unknown
+  action", and the mirror then sends the member's whole new list as `member.roles`, which
+  every origin understands, built from its own copy of the member. An origin that predates
+  this section still refuses changes to the owner's roles by anyone but the owner, and to
+  the roles of a member at or above the actor.
 - **Space profiles.** A member's per-space nickname, avatar, banner, About Me, bio and
   pronouns live on their member row at the origin and travel with it: the snapshot, the
   member pages and every member relay carry all six as full state (a missing field means
