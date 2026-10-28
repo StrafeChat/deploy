@@ -112,7 +112,7 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `GET /users/lookup?username` | resolve a handle to a profile |
 | `GET /users/:id` | profile by origin id |
 | `POST /users/update` | a user's profile changed |
-| `POST /users/presence` | how a user now appears to others, for the receiver's users who are their friends or share a space with them |
+| `POST /users/presence` | how a user now appears to others - their status and what they are playing - for the receiver's users who are their friends or share a space with them |
 | `POST /relationships` | a friend request, acceptance or teardown from the sender's user to one of the receiver's |
 | `POST /rooms` | the origin announces a new room and its participants. The receiver admits each of its own users through the same gate a local account passes to start a conversation (never across a block; under `PM_POLICY=shared` only friends or people sharing a space) and answers `403` when none of them may be reached |
 | `PUT /rooms/participants` | full member set after add/remove; accepted from the room's origin only (only a group's creator may change membership, and the creator lives on the origin). Newly added users of the receiver pass the same gate as above |
@@ -190,6 +190,33 @@ well; people who merely share a PM are not told, matching local behaviour. The g
 configuration and signing key as the API (the compose file gives both services the
 `federation-data` volume); it loads the key but never creates it, so the API always owns
 the identity. If a peer goes down mid-session its users stay at their last known status.
+
+What someone is playing travels with their presence. A presence carries `activities`: at
+most one entry, `{type: "playing", name, started_at}` (`started_at` in unix milliseconds),
+present only while the user does not read offline to others - so an invisible user's game
+never leaves their instance, and changing game while invisible sends nothing at all. The
+user's home instance relays a change of activity like a change of status. The receiver
+takes an activity from `POST /users/presence` only - the user's own instance speaking - and
+checks it the way its own gateway checks a client's report: more than one entry is refused
+with `400`; control, line-breaking and bidi characters are stripped, the name must keep a
+visible character and at most 128 code points, and an entry of a type it does not know, or
+with a name that does not survive that, is dropped while the status still applies;
+`started_at` is clamped into the last seven days. A relay without `activities` means
+"playing nothing", which is also what an instance from before activities sends. The
+receiver keeps the activity in Redis only, never on the shadow row: one key per remote user
+(`<REDIS_CACHE_PREFIX>presence:activity:fed:<id>`), expiring after 12 hours, deleted when a
+relay clears it or says the user is offline. A game can outlast that, so while the user
+keeps playing their home relays their presence again every four hours (its gateway renews
+its own copy hourly), and each relay renews the receiver's 12 hours. If an entry does lapse
+on a receiver - the home went quiet for half a day - the receiver's clients may still show
+the game, so a later relay of "playing nothing" from a user who is online is published
+even though it changes nothing in the receiver's store. Snapshots, member pages, member relays and
+joins carry status only and never set or clear an activity - they describe members of any
+instance, and member relays are written to `federation_outbox`, a ScyllaDB table. Redis's
+periodic snapshot (the compose file runs it with `--save 60 1`) can copy these short-lived
+entries, like the gateway's own per-connection ones, into the snapshot file on the
+instance's disk, where each stays until a later snapshot is taken without it; nothing else
+writes them down.
 
 ### Reactions across instances
 
@@ -377,7 +404,8 @@ a PM - a channel's messages keep the origin's ids everywhere.
   rule that a peer speaks only for its own users with any number of instances, so a
   space's origin cannot make one of its members look different elsewhere. A joining
   member's status travels with the join, so the member-add every mirror gets already
-  carries it, and the snapshot carries every member's.
+  carries it, and the snapshot carries every member's; what a member is playing comes only
+  from their home instance's `POST /users/presence`.
 - **Voice channels** of a federated space run on the origin's LiveKit exactly like a
   call in a federated PM (the origin mints the token, mirrors keep the states).
 - **Clients** see a `federation: {origin_domain, origin_id}` field on a mirrored space
