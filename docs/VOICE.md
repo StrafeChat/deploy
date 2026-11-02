@@ -50,8 +50,9 @@ rung.
 A state is written when a token is issued, confirmed (`connected`) by LiveKit's
 `participant_joined` webhook, updated by `track_published`/`track_unpublished` (camera
 and screen flags are LiveKit's word, not the client's), and removed by `participant_left`,
-`room_finished`, an explicit leave, a moderator, or the reconciler (every 30 s, drops
-states LiveKit no longer backs after a 45 s grace).
+`room_finished`, an explicit leave, a moderator, the room or its space being deleted (which
+ends the call), or the reconciler (every 30 s, drops states LiveKit no longer backs after
+a 45 s grace).
 
 LiveKit identities are `<user id>.<session id>`; the session part is fresh per join so a
 late `participant_left` from an earlier connection cannot remove a newer state. LiveKit
@@ -98,11 +99,22 @@ audio **bitrate** (8-384 kbps, default 64) - `PATCH /spaces/:id/rooms/:roomId`.
 | `DELETE /spaces/:id/members/:userId/voice` | Disconnect (Move members); audited |
 | `POST /voice/webhook` | LiveKit → API, verified by LiveKit's signature |
 
+In a space hosted on another instance, the two moderation routes act at the origin and
+return its status and message, `502` when it cannot be reached.
+
 ## Gateway events
 
 - `VOICE_STATE_UPDATE` - a full state; with `left: true` for a leave (and `moved_to`
   when a moderator moved them, which is the client's cue to rejoin there). Space rooms:
-  on the space channel. PMs: to each participant.
+  on the space channel when nobody is kept out of the room, otherwise on the room's own
+  channel, which the gateway lets only its viewers subscribe to - so who is in a private room
+  reaches no one else, and no member list is read per event. The state's own user also hears
+  it on their channel, because someone who just lost View still needs their left. Where a
+  moved user went is the destination's occupancy: it is in the room's event only when
+  everyone may see the destination, and otherwise goes to the moved user alone, first. PMs:
+  to each participant.
+- Losing View of a voice room while connected to it ends the connection, as on Discord: the
+  instance hosting the call disconnects them (a mirror hears the leave from it).
 - `CALL_CREATE` / `CALL_UPDATE` / `CALL_DELETE` - PM calls: started (rings the others),
   ringing list changed (`rerung: true` restarts the ringtone), ended. To each participant.
 - `READY` carries `voice_states` and `calls` for every room the user can see.
@@ -189,6 +201,16 @@ PM rooms also get `call_started` / `call_ended` system messages.
 - A page that reloads or closes simply drops the LiveKit connection; the webhook removes
   the state. A LiveKit disconnect we did not initiate waits briefly for the server's
   word (moved? removed?) before acting.
+- Voice states come from the server, but a gateway event can be late or lost, above all
+  one relayed between instances, and whoever is listed stays a key recipient. So while in a
+  call, LiveKit's `ParticipantDisconnected` takes that exact identity off the lists after
+  3 s; it does not count during our own full reconnect, which reports everyone as gone. A
+  participant no state names after 1.5 s triggers a refresh of the room. A snapshot of a
+  room (a join reply, a refresh) replaces its list instead of merging, then replays the
+  events that landed while it was on its way, and a left is matched by session, so one
+  that arrives after a rejoin does nothing. A space whose rooms first arrive after `READY`
+  is refreshed room by room, and rooms the client can no longer see are forgotten (a call in
+  one of them ends).
 
 ## End-to-end encryption
 
@@ -246,16 +268,42 @@ receives every packet and decodes none of them, rendering noise instead of the p
 
 ## Calls across instances
 
-A PM or group shared with another instance is hosted by the room's **origin** instance:
-its LiveKit carries the media, it mints every token, and it owns the voice states and the
-call object. The other instances mirror those over federation (see
-`FEDERATION.md`, "Calls across instances"), so everything above - states, events, ringing,
-`call_started` / `call_ended` system messages - looks the same there. Two details differ:
-participants in such rooms are named `<federated id>.<session>` towards LiveKit (the
-`identity` field on a voice state carries it, and the client maps it back through its
-federated-id registry), and the join result's `url` is the origin's LiveKit, which the
-user's browser must be able to reach. The origin's reconciler and webhooks are the only
-ones that matter for these rooms; a mirror never reconciles them against its own LiveKit.
+A PM, group or space voice room shared with another instance is hosted by the room's
+**origin** instance: its LiveKit carries the media, it mints every token, and it owns the
+voice states and the call object. The other instances mirror those over federation (see
+`FEDERATION.md`, "Calls across instances", for the wire), so everything above - states,
+events, ringing, `call_started` / `call_ended` system messages - looks the same there. Two
+details differ: participants in such rooms are named `<federated id>.<session>` towards
+LiveKit (the `identity` field on a voice state carries it, and the client maps it back
+through its federated-id registry), and the join result's `url` is the origin's LiveKit,
+which the user's browser must be able to reach. On a mirror a state's `space_id` and
+`moved_to` are the mirror's own ids, and `token_issued_at` means "last heard from the
+origin".
+
+The origin's reconciler and webhooks are the only ones that matter for these rooms; a
+mirror never reconciles them against its own LiveKit. Its sweep asks the origin instead
+(`POST /rooms/voice/states`, every 30 s, for the rooms it holds states or a call for),
+because a relay gets one attempt and a lost left would leave a ghost that clients go on
+encrypting to. The answer only ever changes the mirror's copy (`applyOriginAnswer` in
+`voice/mirror.go`): it never calls `leave()`, which would ask the origin to remove users it
+may be hosting itself. A relayed state for someone held in another mirrored room clears
+that copy, unless they are this instance's own user, whose join went through here, or the
+other copy is the newer. How long a wrong state can last:
+
+| Situation | Longest a stale state lasts |
+| --- | --- |
+| The origin answers | One sweep or two, under a minute |
+| The origin stops answering | About five minutes, asked once a minute meanwhile. A blip must not hang up a live call, but past that the mirror publishes left for that origin's rooms, which hangs up its clients even if the origin's LiveKit is still up. The first answer afterwards restores whoever is still there |
+| The origin predates the states endpoint | No limit: its whole-request `404` is remembered for an hour and states stay as they were written, ghosts included. Such an origin relays nothing for space rooms either |
+| The mirror predates the endpoint | No limit for a lost left: it never asks. A current origin's relays still clear whoever leaves |
+
+Moderation forwards before anything is read locally, since a mirror's copy may be stale and
+only the origin's LiveKit can act: the checks and the audit entry are the origin's, and the
+relay that follows updates the mirror. In a space, relays and the pull are scoped to who may
+know: a peer with no member who can view the room hears only about its own users (not even
+a left for anyone else), and the pull tells it the same, which clears anything else it holds
+within about a minute of losing its last viewer. Which of this needs both sides upgraded is in
+`FEDERATION.md`, "Mixed versions".
 
 ## Not done
 
