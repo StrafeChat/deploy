@@ -621,6 +621,22 @@ the receiver maps them to its local ids, fetching a shadow when it has to. `mess
 keys it does not know stay as they are. What cannot be resolved stays as it came, which a
 client shows as "Someone".
 
+### Embeds
+
+A bot's rich embeds travel as `embeds` on `POST /rooms/messages`, `PATCH /rooms/messages`
+(the message's whole list, `[]` for none) and the history, pin and search pages, and on a
+mirror's `POST` / `PATCH /spaces/messages` (where, as in a local edit, leaving the field out
+keeps the embeds, `[]` clears them and a list replaces them). They go in their stored form:
+`attachment://` already resolved to the sender's CDN URL, the image sizes the origin learned,
+and no `type` or proxy URLs. Each instance serves every image not on its own CDN through its
+own image proxy, so a reader's address never reaches the image's host or another instance.
+Mentions in a description or a field value cross like message text, and custom emoji used in
+an embed are described in `emojis`. The receiver holds what it gets to its own rules: the
+same limits and URL checks as a local send, never an `attachment://`, none in an end-to-end
+encrypted room or on a message that is not a bot's. The origin refuses a mirror's invalid
+write with the local `400 invalid_embed` and its `path`; a relayed list that fails is dropped
+and the rest of the message kept. An instance from before embeds sends none and ignores them.
+
 ### Discover across instances
 
 Every instance serves the spaces it lists at `GET /discover` and asks each peer for theirs
@@ -699,7 +715,8 @@ uploads made from a mirror, and treating a peer refusal as "this space is gone".
   idempotent for messages, rooms and reactions, so nothing breaks, but a per-entry claim
   belongs in front of that step before the API is scaled out).
 - **Media proxying**: attachments are loaded directly from the origin CDN, which exposes the
-  reader's IP to that instance. A caching proxy on the reader's instance would fix that.
+  reader's IP to that instance. Embed images already go through the reader's instance's own
+  image proxy (see Embeds); attachments could go the same way.
 - **Key gating** on the S2S key endpoints is by signature only (any allowed instance can
   query/claim keys for your users), matching what Matrix does; a stricter "must share a
   room" check is possible with the mapping tables.

@@ -222,6 +222,13 @@ services:
       # .env names as when the web container took them, so existing instances keep working.
       GIPHY_API_KEY: ${STRAFE_GIPHY_API_KEY:-}
       HEYPSTER_API_KEY: ${STRAFE_HEYPSTER_API_KEY:-}
+      # Image proxy for the pictures in bots' embeds (README "Image proxy"): fetched by the
+      # API once, cached in Nebula's media-cache/, served under /api/media/.
+      MEDIA_PROXY: ${MEDIA_PROXY:-true}
+      MEDIA_PROXY_KEY: ${MEDIA_PROXY_KEY:-}
+      MEDIA_PROXY_MAX_MB: ${MEDIA_PROXY_MAX_MB:-8}
+      MEDIA_PROXY_CACHE_TTL: ${MEDIA_PROXY_CACHE_TTL:-7d}
+      MEDIA_PROXY_CACHE_MAX_GB: ${MEDIA_PROXY_CACHE_MAX_GB:-5}
     volumes:
       - federation-data:/data
     # The API is the one service that can reach the mail relay (the `mail` network is

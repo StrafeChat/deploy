@@ -60,6 +60,7 @@ and you're in.
 | Uploads | `ATTACHMENT_MAX_MB`, `STORAGE_BACKEND`, `S3_*`, `NEBULA_CORS_ORIGINS`, `SEED_EMOJI` | Local volume or any S3-compatible bucket; the CDN also serves the emoji sets so the client needs no third-party CDN. |
 | Voice/video | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_NODE_IP` | Bundled LiveKit; see below. |
 | GIF picker | `STRAFE_GIPHY_API_KEY`, `STRAFE_HEYPSTER_API_KEY` | Optional; empty hides the GIF tab behind a "not configured" note. Only the API sees them - it runs the searches itself and never sends a key to browsers. Older versions published them in `https://<your domain>/config.js`, so if you set one before, revoke it with the provider and use a new one. |
+| Image proxy | `MEDIA_PROXY`, `MEDIA_PROXY_KEY`, `MEDIA_PROXY_MAX_MB`, `MEDIA_PROXY_CACHE_TTL`, `MEDIA_PROXY_CACHE_MAX_GB` | On by default; nothing to set. Serves the pictures in bots' embeds from this instance, so the sites they come from never see your users. See below. |
 | Federation | `FEDERATION_ALLOWLIST`, `FEDERATION_BLOCKLIST`, `FEDERATION_SIGNING_KEY`, `DISCOVER_FEDERATION` | Open by default. `DISCOVER_FEDERATION` (on by default) also puts the spaces your peers list on your Discover page, and offers yours to them; a space's managers can opt out of being shared from space settings → Discover. |
 | Tuning | `SNOWFLAKE_NODE_ID`, `LOG_LEVEL`, `SCYLLA_SMP`, `SCYLLA_MEMORY` | |
 
@@ -263,6 +264,32 @@ failed upload later. Objects are served *through* the CDN (same `/cdn/...` URLs 
 before), so the bucket can stay private and nothing about federation or client caching
 changes. Switching backends does not move existing objects; copy them across with your
 bucket's tooling (`aws s3 sync`, `rclone`) first if you are migrating a live instance.
+
+### Image proxy
+
+A bot's message embeds can show pictures from any website. If every reader's browser
+loaded them from there, that site would learn the IP address of everyone who read the
+message, and when. Instead the API hands clients a signed address on this instance
+(`https://<your domain>/api/media/v1/external/...`), fetches the picture itself once, right
+after the message is posted, and keeps it in the CDN under `media-cache/` for
+`MEDIA_PROXY_CACHE_TTL` (default `7d`; a sweeper deletes it after that). The site sees one
+request from your server per picture, never your users. A message relayed from another
+instance gets the same treatment from yours. What is kept takes up at most
+`MEDIA_PROXY_CACHE_MAX_GB` of the CDN's disk (default `5`); once that is full, new pictures
+are still served but fetched again for each view, until expired ones are deleted and make
+room.
+
+Only PNG, JPEG, GIF and WebP are served, judged by the bytes rather than by what the site
+claims, at most `MEDIA_PROXY_MAX_MB` (default 8), 16384 pixels a side and 50 megapixels in
+all, and with headers that keep a browser from treating them as anything else. The fetch
+never reaches this server's own network (loopback, private ranges, the compose services),
+follows at most five redirects and sends nothing of the reader's. A failed fetch is remembered for 15
+minutes, each client address may make the proxy fetch 60 uncached pictures a minute, and
+the API fetches at most 32 at once for views (past that a view is told to retry shortly).
+The signature is what makes an address valid, so the proxy cannot be used to fetch
+arbitrary URLs. Its key is generated and kept in Redis unless you set `MEDIA_PROXY_KEY`.
+`MEDIA_PROXY=false` turns the proxy off; clients then show a "load image" placeholder
+naming the site instead of loading the picture unasked.
 
 ### Voice and video
 
