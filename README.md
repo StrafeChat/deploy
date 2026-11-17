@@ -101,6 +101,17 @@ about it; ban it from the instance - every session ends at once, the gateway dro
 connections, and sign-in is refused with the reason - for a day, a week, a month, a year
 or until lifted; and take down a space, which removes it for all its members.
 
+An administrator can also **delete** a local account or bot (user drawer → Danger zone),
+after a preview of what goes and typing its username to confirm. Its sessions end at once,
+it leaves every space, PM group and call, its friendships, keys, sign-in factors and push
+subscriptions are removed, other instances are told, and its username and email are free
+for a new account immediately. Its messages stay and show as "Deleted User"; uploaded files
+are not deleted. Spaces it owns here are taken down and applications it owns (with their
+bots) deleted only if you tick the box for it; a space it owns on another instance has to be
+transferred or taken down there first. Your own account, the official account and other
+administrators cannot be deleted. A deleted account's instance ban goes with it - keep or add
+an IP ban if the person must stay out.
+
 Anyone can report a user or a space (from a message, a member list, a profile, or the space
 menu). Reports queue up on the dashboard; resolving one can dismiss it, mark it handled,
 ban the account or take the space down, and every action lands in the instance audit log.

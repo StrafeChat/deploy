@@ -74,6 +74,34 @@ avatar, banner, bio, about me, pronouns, bot flag) are refreshed whenever the ho
 relays a change (`POST /federation/v1/users/update`). Profile badges stay instance-local:
 they are something an instance's administrators grant, not something a peer asserts.
 
+#### Deleted accounts
+
+An instance administrator can delete a local account or bot (`DELETE /instance/users/:id`).
+The home instance removes the account outright - its `users` row and its username and email
+claims, so the name is free at once - after tearing down what was the account's through the
+usual relays (leaves, unfriends, group leaves), and last tells every peer that may hold a
+shadow of it with `POST /users/delete {"user": "<FID>"}` through the durable outbox, so the
+notice arrives after those relays. The audience is everyone a profile update would reach
+plus the homes of accounts it had a pending friend request with.
+
+A peer never deletes the shadow: messages, reactions and pins it holds name the shadow's id.
+It ends what its own users had with the account (friendships and requests, membership of
+spaces hosted there, group PMs - with `SESSION_ROTATE` for the remaining members - and a
+call), then turns the shadow into a **tombstone**: row and `users_by_remote` mapping kept,
+every profile field blank, `deleted_at` set. A 1:1 PM keeps the tombstone as its other
+participant (it renders as "Deleted User" and refuses new messages and calls). Identity is
+by FID everywhere, so a new account that takes the freed name has a new id and gets a new,
+separate shadow; nothing carries over.
+
+- A tombstone is never resurrected or renamed: a later profile for the same FID is ignored.
+- A notice is accepted only for the sender's own accounts (`403` otherwise) and is
+  idempotent (`204` for an unknown account or one already tombstoned).
+- History, search hits and pin lists name a deleted local author as `{"fid": ..., "deleted":
+  true}` instead of leaving the sender out, so a mirror keeps those messages. From the
+  account's own home that makes a tombstone; from a third instance it is only a hint: the
+  account's home is asked, and only its `404` makes a tombstone (a profile means the hint was
+  wrong).
+
 ### Mirrored rooms
 
 Each participating instance keeps its **own** room row, participant rows and message rows
@@ -112,6 +140,7 @@ URL path) means a reverse proxy may mount the API under any prefix.
 | `GET /users/lookup?username` | resolve a handle to a profile |
 | `GET /users/:id` | profile by origin id |
 | `POST /users/update` | a user's profile changed |
+| `POST /users/delete` | one of the sender's accounts was deleted by its administrators; the receiver forgets it and tombstones its shadow (see "Deleted accounts"). Only for the sender's own accounts |
 | `POST /users/presence` | how a user now appears to others - their status and what they are playing - for the receiver's users who are their friends or share a space with them |
 | `POST /relationships` | a friend request, acceptance or teardown from the sender's user to one of the receiver's |
 | `POST /rooms` | the origin announces a new room and its participants. The receiver admits each of its own users through the same gate a local account passes to start a conversation (never across a block; under `PM_POLICY=shared` only friends or people sharing a space) and answers `403` when none of them may be reached |
@@ -687,6 +716,13 @@ takes effect where the instance that has to act on it is new enough.
 | Automod and birthday settings cross; its members get birthday greetings | Not sent, so the mirror has no birthday room and greets nobody | Ignored, with the same result, as before |
 | A mirror shows refusals properly | Automod and similar refusals arrive as `500`, which a current mirror reads as the origin being unreachable: `502` | Status and reason pass through; the extra fields are ignored |
 | Notices name people and threads (`system_payload` ids) | Plain ids stay as they came and read "Someone" | Stores the FIDs verbatim, with the same result |
+
+For account deletion the two sides are the deleted account's home and every other instance:
+
+| Behaviour | With an older peer receiving | With an older home sending |
+| --- | --- | --- |
+| A deleted account's shadow is forgotten (`POST /users/delete`) | `404`, so the entry is dropped from the outbox: the shadow keeps its old name until that peer upgrades (and is never told again). Friendships, requests and space memberships are still torn down by the relays that went before | Never sent: the shadow stays as it was |
+| A deleted author in history (a `deleted` profile) | The flag is ignored: a profile from the home blanks the shadow's name (an empty name); from a third instance the home answers `404` and the message is dropped from that page, as before | The sender is left out, so a current mirror drops those messages from history pages, as before |
 
 So a new mirror behind an older origin gets none of these fixes and keeps the old behaviour.
 A new origin's relays do clear people who leave from an older mirror's copy (only a lost left stays a ghost
